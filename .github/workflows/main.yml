@@ -374,16 +374,3 @@ jobs:
           import com.github.standobyte.jojo.client.render.entity.pose.ModelPose;
           import com.github.standobyte.jojo.client.render.entity.pose.RotationAngle;
           import com.r
-
-      - name: Build JAR
-        run: |
-          cd out
-          chmod +x gradlew
-          ./gradlew build
-
-      - name: Upload JAR
-        uses: actions/upload-artifact@v4
-        with:
-          name: TheWorldUltimate
-          path: out/build/libs/*.jar
-          if-no-files-found: error
