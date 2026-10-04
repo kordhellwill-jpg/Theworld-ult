@@ -1,0 +1,142 @@
+name: build
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 8
+      - name: Generate project
+        run: |
+          git clone --depth 1 https://github.com/StandoByte/RotP-Addon-example.git tpl
+          set -e
+          BASE=$PWD
+          SRC=$BASE/tpl
+          OUT=$BASE/out
+          rm -rf $OUT && mkdir -p $OUT && cd $SRC
+          cp -r gradle gradlew gradlew.bat .gitignore .gitattributes LICENSE gradle.properties $OUT/
+          sed -e "s/archivesBaseName = 'RotP-AddonExample'/archivesBaseName = 'RotP-TheWorldUltimate'/" -e "s/com.yourname.modid/com.rotpaddon.twu/" build.gradle > $OUT/build.gradle
+          P=$OUT/src/main/java/com/rotpaddon/twu
+          R=$OUT/src/main/resources
+          mkdir -p $P/init $P/action $P/entity $P/client/render $R/META-INF
+          mkdir -p $R/assets/rotp_twu/lang $R/assets/rotp_twu/textures/action $R/assets/rotp_twu/textures/entity/stand $R/assets/rotp_twu/textures/power
+          sed -e 's/myrotpaddon/rotp_twu/g' -e 's/Example RotP Stand Addon/RotP The World Ultimate/' -e 's/A template for making Stand addons for Ripples of the Past mod./Adds the Stand THE WORLD ULTIMATE: 30s time stop, barrage and launching punch./' -e 's/^logoFile=.*$//' src/main/resources/META-INF/mods.toml > $R/META-INF/mods.toml
+          cp src/main/resources/pack.mcmeta $R/
+          printf '{\n}\n' > $R/assets/rotp_twu/sounds.json
+          A=src/main/resources/assets/myrotpaddon/textures
+          cp $A/entity/stand/example_stand.png $R/assets/rotp_twu/textures/entity/stand/the_world_ultimate.png
+          cp $A/power/example_stand.png $R/assets/rotp_twu/textures/power/the_world_ultimate.png
+          cp $A/action/example_stand_punch.png $R/assets/rotp_twu/textures/action/twu_punch.png
+          cp $A/action/example_stand_barrage.png $R/assets/rotp_twu/textures/action/twu_barrage.png
+          cp $A/action/example_stand_block.png $R/assets/rotp_twu/textures/action/twu_block.png
+          cp $A/action/example_stand_heavy_punch.png $R/assets/rotp_twu/textures/action/twu_launch_punch.png
+          cp $A/action/example_stand_finisher_punch.png $R/assets/rotp_twu/textures/action/twu_time_stop.png
+
+          cat > $R/assets/rotp_twu/lang/en_us.json <<'EOF'
+          {
+            "entity.rotp_twu.the_world_ultimate": "The World Ultimate",
+            "stand.rotp_twu.the_world_ultimate": "The World Ultimate",
+            "action.rotp_twu.twu_punch": "Punch",
+            "action.rotp_twu.twu_barrage": "Punch Barrage",
+            "action.rotp_twu.twu_launch_punch": "Launching Punch",
+            "action.rotp_twu.twu_block": "Block",
+            "action.rotp_twu.twu_time_stop": "Time Stop (30s)"
+          }
+          EOF
+          cat > $R/assets/rotp_twu/lang/ru_ru.json <<'EOF'
+          {
+            "entity.rotp_twu.the_world_ultimate": "The World Ultimate",
+            "stand.rotp_twu.the_world_ultimate": "The World Ultimate",
+            "action.rotp_twu.twu_punch": "Удар",
+            "action.rotp_twu.twu_barrage": "Серия ударов",
+            "action.rotp_twu.twu_launch_punch": "Удар с подбросом",
+            "action.rotp_twu.twu_block": "Блок",
+            "action.rotp_twu.twu_time_stop": "Остановка времени (30 с)"
+          }
+          EOF
+
+          cat > $P/AddonMain.java <<'EOF'
+          package com.rotpaddon.twu;
+
+          import org.apache.logging.log4j.LogManager;
+          import org.apache.logging.log4j.Logger;
+
+          import com.rotpaddon.twu.init.InitEntities;
+          import com.rotpaddon.twu.init.InitSounds;
+          import com.rotpaddon.twu.init.InitStands;
+
+          import net.minecraftforge.eventbus.api.IEventBus;
+          import net.minecraftforge.fml.common.Mod;
+          import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
+
+          @Mod(AddonMain.MOD_ID)
+          public class AddonMain {
+              public static final String MOD_ID = "rotp_twu";
+              public static final Logger LOGGER = LogManager.getLogger();
+
+              public AddonMain() {
+                  IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
+                  InitEntities.ENTITIES.register(modEventBus);
+                  InitSounds.SOUNDS.register(modEventBus);
+                  InitStands.ACTIONS.register(modEventBus);
+                  InitStands.STANDS.register(modEventBus);
+              }
+          }
+          EOF
+
+          cat > $P/init/InitEntities.java <<'EOF'
+          package com.rotpaddon.twu.init;
+
+          import com.rotpaddon.twu.AddonMain;
+
+          import net.minecraft.entity.EntityType;
+          import net.minecraftforge.registries.DeferredRegister;
+          import net.minecraftforge.registries.ForgeRegistries;
+
+          public class InitEntities {
+              public static final DeferredRegister<EntityType<?>> ENTITIES = DeferredRegister.create(
+                      ForgeRegistries.ENTITIES, AddonMain.MOD_ID);
+          }
+          EOF
+
+          cat > $P/init/InitSounds.java <<'EOF'
+          package com.rotpaddon.twu.init;
+
+          import com.rotpaddon.twu.AddonMain;
+
+          import net.minecraft.util.ResourceLocation;
+          import net.minecraft.util.SoundEvent;
+          import net.minecraftforge.fml.RegistryObject;
+          import net.minecraftforge.registries.DeferredRegister;
+          import net.minecraftforge.registries.ForgeRegistries;
+
+          public class InitSounds {
+              public static final DeferredRegister<SoundEvent> SOUNDS = DeferredRegister.create(
+                      ForgeRegistries.SOUND_EVENTS, AddonMain.MOD_ID);
+
+              // Silent placeholders: add .ogg files + entries in sounds.json to make them audible.
+              public static final RegistryObject<SoundEvent> TIME_STOP = SOUNDS.register("twu_time_stop",
+                      () -> new SoundEvent(new ResourceLocation(AddonMain.MOD_ID, "twu_time_stop")));
+
+              public static final RegistryObject<SoundEvent> TIME_RESUME = SOUNDS.register("twu_time_resume",
+                      () -> new SoundEvent(new ResourceLocation(AddonMain.MOD_ID, "twu_time_resume")));
+          }
+          EOF
+
+          cat > $P/entity/TheWorldUltimateEntity.java <<'EOF'
+          package com.rotpaddon.twu.entity;
+
+          import com.github.standobyte.jojo.entity.stand.StandEntity;
+          import com.github.standobyte.jojo.entity.stand.StandEntityType;
+
+          import net.minecraft.world.World;
+
+          public class TheWorldUltimateEntity extends StandEntity {
+
+              public TheWorldUltimateEntity(StandEntityType<TheWorldUltimateEntity> type, World world) {
+                  super(type, world);
+              }
