@@ -6,6 +6,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -26,7 +27,22 @@ jobs:
           mkdir -p $R/assets/rotp_twu/lang $R/assets/rotp_twu/textures/action $R/assets/rotp_twu/textures/entity/stand $R/assets/rotp_twu/textures/power
           sed -e 's/myrotpaddon/rotp_twu/g' -e 's/Example RotP Stand Addon/RotP The World Ultimate/' -e 's/A template for making Stand addons for Ripples of the Past mod./Adds the Stand THE WORLD ULTIMATE: 30s time stop, barrage and launching punch./' -e 's/^logoFile=.*$//' src/main/resources/META-INF/mods.toml > $R/META-INF/mods.toml
           cp src/main/resources/pack.mcmeta $R/
-          printf '{\n}\n' > $R/assets/rotp_twu/sounds.json
+          SJ=$R/assets/rotp_twu/sounds.json
+          echo '{' > $SJ
+          FIRST=1
+          HS=false
+          for n in twu_summon twu_time_stop twu_time_resume twu_blink twu_barrage; do
+            if [ -f "$BASE/extra/sounds/$n.ogg" ]; then
+              mkdir -p $R/assets/rotp_twu/sounds/stand
+              cp "$BASE/extra/sounds/$n.ogg" $R/assets/rotp_twu/sounds/stand/
+              if [ $FIRST = 0 ]; then echo ',' >> $SJ; fi
+              FIRST=0
+              printf '"%s": {"sounds": ["rotp_twu:stand/%s"]}' $n $n >> $SJ
+              if [ $n = twu_summon ]; then HS=true; fi
+            fi
+          done
+          echo '}' >> $SJ
+          printf 'package com.rotpaddon.twu;\n\npublic class ExtraAssets {\n    public static final boolean HAS_SUMMON = %s;\n}\n' $HS > $P/ExtraAssets.java
           A=src/main/resources/assets/myrotpaddon/textures
           cp $A/entity/stand/example_stand.png $R/assets/rotp_twu/textures/entity/stand/the_world_ultimate.png
           cp $A/power/example_stand.png $R/assets/rotp_twu/textures/power/the_world_ultimate.png
@@ -35,6 +51,10 @@ jobs:
           cp $A/action/example_stand_block.png $R/assets/rotp_twu/textures/action/twu_block.png
           cp $A/action/example_stand_heavy_punch.png $R/assets/rotp_twu/textures/action/twu_launch_punch.png
           cp $A/action/example_stand_finisher_punch.png $R/assets/rotp_twu/textures/action/twu_time_stop.png
+          cp $A/action/example_stand_block.png $R/assets/rotp_twu/textures/action/twu_time_resume.png
+          cp $A/action/example_stand_heavy_punch.png $R/assets/rotp_twu/textures/action/twu_time_stop_blink.png
+          if [ -f "$BASE/extra/the_world_ultimate.png" ]; then cp "$BASE/extra/the_world_ultimate.png" $R/assets/rotp_twu/textures/entity/stand/the_world_ultimate.png; fi
+          if [ -f "$BASE/extra/power.png" ]; then cp "$BASE/extra/power.png" $R/assets/rotp_twu/textures/power/the_world_ultimate.png; fi
 
           cat > $R/assets/rotp_twu/lang/en_us.json <<'EOF'
           {
@@ -44,7 +64,9 @@ jobs:
             "action.rotp_twu.twu_barrage": "Punch Barrage",
             "action.rotp_twu.twu_launch_punch": "Launching Punch",
             "action.rotp_twu.twu_block": "Block",
-            "action.rotp_twu.twu_time_stop": "Time Stop (30s)"
+            "action.rotp_twu.twu_time_stop": "Time Stop (30s)",
+            "action.rotp_twu.twu_time_resume": "Resume Time",
+            "action.rotp_twu.twu_time_stop_blink": "Time Stop Blink"
           }
           EOF
           cat > $R/assets/rotp_twu/lang/ru_ru.json <<'EOF'
@@ -55,7 +77,9 @@ jobs:
             "action.rotp_twu.twu_barrage": "Серия ударов",
             "action.rotp_twu.twu_launch_punch": "Удар с подбросом",
             "action.rotp_twu.twu_block": "Блок",
-            "action.rotp_twu.twu_time_stop": "Остановка времени (30 с)"
+            "action.rotp_twu.twu_time_stop": "Остановка времени (30 с)",
+            "action.rotp_twu.twu_time_resume": "Возобновить время",
+            "action.rotp_twu.twu_time_stop_blink": "Телепорт в остановленном времени"
           }
           EOF
 
@@ -106,7 +130,11 @@ jobs:
           cat > $P/init/InitSounds.java <<'EOF'
           package com.rotpaddon.twu.init;
 
+          import java.util.function.Supplier;
+
+          import com.github.standobyte.jojo.init.ModSounds;
           import com.rotpaddon.twu.AddonMain;
+          import com.rotpaddon.twu.ExtraAssets;
 
           import net.minecraft.util.ResourceLocation;
           import net.minecraft.util.SoundEvent;
@@ -118,12 +146,21 @@ jobs:
               public static final DeferredRegister<SoundEvent> SOUNDS = DeferredRegister.create(
                       ForgeRegistries.SOUND_EVENTS, AddonMain.MOD_ID);
 
-              // Silent placeholders: add .ogg files + entries in sounds.json to make them audible.
-              public static final RegistryObject<SoundEvent> TIME_STOP = SOUNDS.register("twu_time_stop",
-                      () -> new SoundEvent(new ResourceLocation(AddonMain.MOD_ID, "twu_time_stop")));
+              private static RegistryObject<SoundEvent> reg(String name) {
+                  return SOUNDS.register(name, () -> new SoundEvent(new ResourceLocation(AddonMain.MOD_ID, name)));
+              }
 
-              public static final RegistryObject<SoundEvent> TIME_RESUME = SOUNDS.register("twu_time_resume",
-                      () -> new SoundEvent(new ResourceLocation(AddonMain.MOD_ID, "twu_time_resume")));
+              // Sound files are optional: put .ogg files named like these into the repo folder extra/sounds/
+              public static final RegistryObject<SoundEvent> SUMMON = reg("twu_summon");
+              public static final RegistryObject<SoundEvent> TIME_STOP = reg("twu_time_stop");
+              public static final RegistryObject<SoundEvent> TIME_RESUME = reg("twu_time_resume");
+              public static final RegistryObject<SoundEvent> BLINK = reg("twu_blink");
+              public static final RegistryObject<SoundEvent> BARRAGE = reg("twu_barrage");
+
+              // If there is no twu_summon.ogg, the default RotP summon sound is used.
+              public static final Supplier<SoundEvent> SUMMON_OR_DEFAULT = ExtraAssets.HAS_SUMMON
+                      ? (Supplier<SoundEvent>) SUMMON
+                      : (Supplier<SoundEvent>) ModSounds.STAND_SUMMON_DEFAULT;
           }
           EOF
 
@@ -176,12 +213,15 @@ jobs:
           package com.rotpaddon.twu.init;
 
           import com.github.standobyte.jojo.action.Action;
+          import com.github.standobyte.jojo.action.stand.StandAction;
           import com.github.standobyte.jojo.action.stand.StandEntityAction;
           import com.github.standobyte.jojo.action.stand.StandEntityBlock;
           import com.github.standobyte.jojo.action.stand.StandEntityHeavyAttack;
           import com.github.standobyte.jojo.action.stand.StandEntityLightAttack;
           import com.github.standobyte.jojo.action.stand.StandEntityMeleeBarrage;
+          import com.github.standobyte.jojo.action.stand.TimeResume;
           import com.github.standobyte.jojo.action.stand.TimeStop;
+          import com.github.standobyte.jojo.action.stand.TimeStopInstant;
           import com.github.standobyte.jojo.entity.stand.StandEntityType;
           import com.github.standobyte.jojo.init.ModSounds;
           import com.github.standobyte.jojo.init.power.stand.EntityStandRegistryObject;
@@ -214,7 +254,8 @@ jobs:
               // Series of fast punches
               public static final RegistryObject<StandEntityAction> TWU_BARRAGE = ACTIONS.register("twu_barrage",
                       () -> new StandEntityMeleeBarrage(new StandEntityMeleeBarrage.Builder()
-                              .barrageHitSound(ModSounds.STAND_PUNCH_LIGHT)));
+                              .barrageHitSound(ModSounds.STAND_PUNCH_LIGHT)
+                              .standSound(InitSounds.BARRAGE)));
 
               // Powerful punch that launches mobs upwards (shift + Punch / Barrage)
               public static final RegistryObject<StandEntityHeavyAttack> TWU_LAUNCH_PUNCH = ACTIONS.register("twu_launch_punch",
@@ -234,6 +275,18 @@ jobs:
                               .timeResumeSound(InitSounds.TIME_RESUME)
                               .staminaCost(100)
                               .staminaCostTick(0.4F)));
+
+              // Shift + Time Stop while time is stopped: resume time
+              public static final RegistryObject<TimeResume> TWU_TIME_RESUME = ACTIONS.register("twu_time_resume",
+                      () -> new TimeResume(new StandAction.Builder()
+                              .shiftVariationOf(TWU_TIME_STOP)));
+
+              // Shift + Time Stop: teleport (blink)
+              public static final RegistryObject<TimeStopInstant> TWU_TIME_STOP_BLINK = ACTIONS.register("twu_time_stop_blink",
+                      () -> new TimeStopInstant(new StandAction.Builder()
+                              .ignoresPerformerStun()
+                              .partsRequired(StandPart.MAIN_BODY),
+                              TWU_TIME_STOP, InitSounds.BLINK, false));
 
               public static final EntityStandRegistryObject<EntityStandType<TimeStopperStandStats>, StandEntityType<TheWorldUltimateEntity>> STAND_THE_WORLD_ULTIMATE =
                       new EntityStandRegistryObject<>("the_world_ultimate",
@@ -261,7 +314,7 @@ jobs:
 
                               InitEntities.ENTITIES,
                               () -> new StandEntityType<TheWorldUltimateEntity>(TheWorldUltimateEntity::new, 0.7F, 2.15F)
-                              .summonSound(ModSounds.STAND_SUMMON_DEFAULT)
+                              .summonSound(InitSounds.SUMMON_OR_DEFAULT)
                               .unsummonSound(ModSounds.STAND_UNSUMMON_DEFAULT))
                       .withDefaultStandAttributes();
           }
@@ -320,42 +373,4 @@ jobs:
           import com.github.standobyte.jojo.client.render.entity.pose.IModelPose;
           import com.github.standobyte.jojo.client.render.entity.pose.ModelPose;
           import com.github.standobyte.jojo.client.render.entity.pose.RotationAngle;
-          import com.rotpaddon.twu.entity.TheWorldUltimateEntity;
-
-          // Placeholder humanoid model (same as the template). Replace with your own Blockbench model later.
-          public class TWUModel extends HumanoidStandModel<TheWorldUltimateEntity> {
-
-              public TWUModel() {
-                  super();
-              }
-
-              @Override
-              protected RotationAngle[][] initSummonPoseRotations() {
-                  return new RotationAngle[][] {
-                      new RotationAngle[] {},
-                      new RotationAngle[] {}
-                  };
-              }
-
-              @Override
-              protected ModelPose<TheWorldUltimateEntity> initIdlePose() {
-                  return super.initIdlePose();
-              }
-
-              @Override
-              protected IModelPose<TheWorldUltimateEntity> initIdlePose2Loop() {
-                  return super.initIdlePose2Loop();
-              }
-          }
-          EOF
-
-
-      - name: Build
-        run: |
-          cd out
-          chmod +x gradlew
-          ./gradlew build
-      - uses: actions/upload-artifact@v4
-        with:
-          name: mod
-          path: out/build/libs/*.jar
+          import com.r
