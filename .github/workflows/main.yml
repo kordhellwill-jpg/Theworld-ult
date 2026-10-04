@@ -373,4 +373,42 @@ jobs:
           import com.github.standobyte.jojo.client.render.entity.pose.IModelPose;
           import com.github.standobyte.jojo.client.render.entity.pose.ModelPose;
           import com.github.standobyte.jojo.client.render.entity.pose.RotationAngle;
-          import com.r
+          import com.rotpaddon.twu.entity.TheWorldUltimateEntity;
+
+          // Placeholder humanoid model (same as the template). Replace with your own Blockbench model later.
+          public class TWUModel extends HumanoidStandModel<TheWorldUltimateEntity> {
+
+              public TWUModel() {
+                  super();
+              }
+
+              @Override
+              protected RotationAngle[][] initSummonPoseRotations() {
+                  return new RotationAngle[][] {
+                      new RotationAngle[] {},
+                      new RotationAngle[] {}
+                  };
+              }
+
+              @Override
+              protected ModelPose<TheWorldUltimateEntity> initIdlePose() {
+                  return super.initIdlePose();
+              }
+
+              @Override
+              protected IModelPose<TheWorldUltimateEntity> initIdlePose2Loop() {
+                  return super.initIdlePose2Loop();
+              }
+          }
+          EOF
+
+
+      - name: Build
+        run: |
+          cd out
+          chmod +x gradlew
+          ./gradlew build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mod
+          path: out/build/libs/*.jar
