@@ -27,6 +27,15 @@ jobs:
           mkdir -p $R/assets/rotp_twu/lang $R/assets/rotp_twu/textures/action $R/assets/rotp_twu/textures/entity/stand $R/assets/rotp_twu/textures/power
           sed -e 's/myrotpaddon/rotp_twu/g' -e 's/Example RotP Stand Addon/RotP The World Ultimate/' -e 's/A template for making Stand addons for Ripples of the Past mod./Adds the Stand THE WORLD ULTIMATE: 30s time stop, barrage and launching punch./' -e 's/^logoFile=.*$//' src/main/resources/META-INF/mods.toml > $R/META-INF/mods.toml
           cp src/main/resources/pack.mcmeta $R/
+          mkdir -p $R/assets/rotp_twu/geo
+          python3 - "$SRC" "$R" <<'PYEND'
+          import json, sys
+          src, res = sys.argv[1], sys.argv[2]
+          d = json.load(open(src + '/src/main/resources/assets/myrotpaddon/geo/example_stand.geo.json'))
+          for g in d['minecraft:geometry']:
+              g['bones'] = [b for b in g['bones'] if b['name'] != 'pickaxe']
+          json.dump(d, open(res + '/assets/rotp_twu/geo/the_world_ultimate.geo.json', 'w'), indent=2)
+          PYEND
           SJ=$R/assets/rotp_twu/sounds.json
           echo '{' > $SJ
           FIRST=1
@@ -363,7 +372,7 @@ jobs:
                           StandModelRegistry.registerModel(new ResourceLocation(AddonMain.MOD_ID, "the_world_ultimate"), TWUModel::new),
                           new ResourceLocation(AddonMain.MOD_ID, "textures/entity/stand/the_world_ultimate.png"), 0);
               }
-          }
+              }
           EOF
 
           cat > $P/client/render/TWUModel.java <<'EOF'
@@ -375,7 +384,7 @@ jobs:
           import com.github.standobyte.jojo.client.render.entity.pose.RotationAngle;
           import com.rotpaddon.twu.entity.TheWorldUltimateEntity;
 
-          // Placeholder humanoid model (same as the template). Replace with your own Blockbench model later.
+          // Humanoid model with the summon / idle poses taken from The World Alternative Universe addon.
           public class TWUModel extends HumanoidStandModel<TheWorldUltimateEntity> {
 
               public TWUModel() {
@@ -385,19 +394,76 @@ jobs:
               @Override
               protected RotationAngle[][] initSummonPoseRotations() {
                   return new RotationAngle[][] {
-                      new RotationAngle[] {},
-                      new RotationAngle[] {}
+                      new RotationAngle[] {
+                          RotationAngle.fromDegrees(head, -23.94412F, -5.79396F, 11.45258F),
+                          RotationAngle.fromDegrees(body, -7.5F, -50.0F, 0.0F),
+                          RotationAngle.fromDegrees(upperPart, 0.0F, 0.0F, 0.0F),
+                          RotationAngle.fromDegrees(leftArm, 5.24264F, 17.64914F, -0.916F),
+                          RotationAngle.fromDegrees(leftForeArm, -67.5F, 0.0F, 0.0F),
+                          RotationAngle.fromDegrees(rightArm, -23.94412F, -5.79396F, 11.45258F),
+                          RotationAngle.fromDegrees(rightForeArm, -12.5F, 0.0F, 2.5F),
+                          RotationAngle.fromDegrees(leftLeg, -45.0F, 0.0F, -5.0F),
+                          RotationAngle.fromDegrees(leftLowerLeg, 52.5F, 0.0F, 0.0F),
+                          RotationAngle.fromDegrees(rightLeg, 20.0F, 5.0F, 0.0F),
+                          RotationAngle.fromDegrees(rightLowerLeg, 22.5F, 0.0F, 0.0F)
+                      },
+                      new RotationAngle[] {
+                          RotationAngle.fromDegrees(head, 12.5F, 0.0F, 0.0F),
+                          RotationAngle.fromDegrees(body, 0.0F, 32.5F, 0.0F),
+                          RotationAngle.fromDegrees(upperPart, 0.0F, 0.0F, 0.0F),
+                          RotationAngle.fromDegrees(leftArm, 31.06171F, 14.67052F, -38.7015F),
+                          RotationAngle.fromDegrees(leftForeArm, -54.5052F, 12.83214F, 11.02332F),
+                          RotationAngle.fromDegrees(rightArm, -22.5947F, -25.61033F, 74.7314F),
+                          RotationAngle.fromDegrees(rightForeArm, -49.18983F, -2.16323F, -15.18379F),
+                          RotationAngle.fromDegrees(leftLeg, 0.0F, 0.0F, -10.0F),
+                          RotationAngle.fromDegrees(leftLowerLeg, 52.5F, 0.0F, 0.0F),
+                          RotationAngle.fromDegrees(rightLeg, -25.0F, 0.0F, 10.0F),
+                          RotationAngle.fromDegrees(rightLowerLeg, 60.0F, 0.0F, 0.0F)
+                      },
+                      new RotationAngle[] {
+                          RotationAngle.fromDegrees(head, 12.5F, 0.0F, 0.0F),
+                          RotationAngle.fromDegrees(body, -10.0F, 32.5F, 0.0F),
+                          RotationAngle.fromDegrees(upperPart, 0.0F, 0.0F, 0.0F),
+                          RotationAngle.fromDegrees(leftArm, -171.9292F, -55.8606F, 17.249F),
+                          RotationAngle.fromDegrees(leftForeArm, -97.71917F, 3.8993F, 23.21666F),
+                          RotationAngle.fromDegrees(rightArm, -153.63437F, 54.47308F, -19.57356F),
+                          RotationAngle.fromDegrees(rightForeArm, -106.68983F, -2.16323F, -15.18379F),
+                          RotationAngle.fromDegrees(leftLeg, 0.0F, 0.0F, -10.0F),
+                          RotationAngle.fromDegrees(leftLowerLeg, 52.5F, 0.0F, 0.0F),
+                          RotationAngle.fromDegrees(rightLeg, -25.0F, 0.0F, 10.0F),
+                          RotationAngle.fromDegrees(rightLowerLeg, 60.0F, 0.0F, 0.0F)
+                      }
                   };
               }
 
               @Override
               protected ModelPose<TheWorldUltimateEntity> initIdlePose() {
-                  return super.initIdlePose();
+                  return new ModelPose<>(new RotationAngle[] {
+                      RotationAngle.fromDegrees(upperPart, 0.0F, 0.0F, 0.0F),
+                      RotationAngle.fromDegrees(body, -8.7F, 50.0F, -2.0F),
+                      RotationAngle.fromDegrees(leftArm, 0.0F, 5.0F, -20.0F),
+                      RotationAngle.fromDegrees(leftForeArm, -25.0F, 0.0F, 0.0F),
+                      RotationAngle.fromDegrees(rightArm, 20.2F, 1.0F, 10.0F),
+                      RotationAngle.fromDegrees(rightForeArm, -30.0F, 0.0F, 0.0F),
+                      RotationAngle.fromDegrees(leftLeg, 2.5F, -17.5F, -5.2F),
+                      RotationAngle.fromDegrees(leftLowerLeg, 22.5F, 0.0F, 0.0F),
+                      RotationAngle.fromDegrees(rightLeg, -26.0F, 31.0F, 7.5F),
+                      RotationAngle.fromDegrees(rightLowerLeg, 92.5F, 0.0F, 0.0F)
+                  });
               }
 
               @Override
               protected IModelPose<TheWorldUltimateEntity> initIdlePose2Loop() {
-                  return super.initIdlePose2Loop();
+                  return new ModelPose<>(new RotationAngle[] {
+                      RotationAngle.fromDegrees(leftArm, 5.0F, 5.0F, -20.0F),
+                      RotationAngle.fromDegrees(leftForeArm, -32.5F, 0.0F, 0.0F),
+                      RotationAngle.fromDegrees(rightArm, 25.0F, 1.0F, 10.0F),
+                      RotationAngle.fromDegrees(rightForeArm, -32.5F, 0.0F, 0.0F),
+                      RotationAngle.fromDegrees(leftLeg, 8.0F, -17.5F, -5.2F),
+                      RotationAngle.fromDegrees(leftLowerLeg, 25.0F, 0.0F, 0.0F),
+                      RotationAngle.fromDegrees(rightLeg, -28.5F, 31.0F, 8.5F),
+                      RotationAngle.fromDegrees(rightLowerLeg, 100.0F, 0.0F, 0.0F)
+                  });
               }
           }
           EOF
