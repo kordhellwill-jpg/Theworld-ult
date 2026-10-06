@@ -765,7 +765,8 @@ jobs:
                           RotationAngle.fromDegrees(leftLeg, 0.0F, 0.0F, -10.0F),
                           RotationAngle.fromDegrees(leftLowerLeg, 52.5F, 0.0F, 0.0F),
                           RotationAngle.fromDegrees(rightLeg, -25.0F, 0.0F, 10.0F),
-                          RotationAngle.fromDegrees(rightLowerLeg, 60.0F, 0.0F, 0.0F),
+                          RotationAngle.fromDegrees(rightLowerLeg, 60.0F, 0.0F, 0.0F)
+                          },
                       new RotationAngle[] {
                           RotationAngle.fromDegrees(head, 12.5F, 0.0F, 0.0F),
                           RotationAngle.fromDegrees(body, -10.0F, 32.5F, 0.0F),
