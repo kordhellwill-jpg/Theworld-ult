@@ -61,8 +61,8 @@ jobs:
           cp $A/action/example_stand_heavy_punch.png $R/assets/rotp_twu/textures/action/twu_launch_punch.png
           cp $A/action/example_stand_finisher_punch.png $R/assets/rotp_twu/textures/action/twu_time_stop.png
           cp $A/action/example_stand_block.png $R/assets/rotp_twu/textures/action/twu_time_resume.png
-          cp $A/action/example_stand_barrage.png $R/assets/rotp_twu/textures/action/twu_grab_throw.png
-          cp $A/action/example_stand_finisher_punch.png $R/assets/rotp_twu/textures/action/twu_air_barrage.png
+          cp $A/action/example_stand_barrage.png $R/assets/rotp_twu/textures/action/twu_grab.png
+          cp $A/action/example_stand_heavy_punch.png $R/assets/rotp_twu/textures/action/twu_throw.png
           cp $A/action/example_stand_heavy_punch.png $R/assets/rotp_twu/textures/action/twu_time_stop_blink.png
           if [ -f "$BASE/extra/the_world_ultimate.png" ]; then cp "$BASE/extra/the_world_ultimate.png" $R/assets/rotp_twu/textures/entity/stand/the_world_ultimate.png; fi
           if [ -f "$BASE/extra/power.png" ]; then cp "$BASE/extra/power.png" $R/assets/rotp_twu/textures/power/the_world_ultimate.png; fi
@@ -78,11 +78,12 @@ jobs:
             "action.rotp_twu.twu_time_stop": "Time Stop (30s)",
             "action.rotp_twu.twu_time_resume": "Resume Time",
             "action.rotp_twu.twu_time_stop_blink": "Time Stop Blink",
-            "action.rotp_twu.twu_grab_throw": "Grab / Throw",
-            "rotp_twu.message.grabbed": "Grabbed! Use again to throw",
+            "action.rotp_twu.twu_grab": "Grab",
+            "action.rotp_twu.twu_throw": "Throw",
+            "rotp_twu.message.grabbed": "Grabbed!",
             "rotp_twu.message.nothing": "Nothing to grab",
-            "rotp_twu.message.escaped": "It broke free!",
-            "action.rotp_twu.twu_air_barrage": "Air Barrage"
+            "rotp_twu.message.not_holding": "Nothing to throw",
+            "rotp_twu.message.escaped": "It broke free!"
           }
           EOF
           cat > $R/assets/rotp_twu/lang/ru_ru.json <<'EOF'
@@ -96,11 +97,12 @@ jobs:
             "action.rotp_twu.twu_time_stop": "Остановка времени (30 с)",
             "action.rotp_twu.twu_time_resume": "Возобновить время",
             "action.rotp_twu.twu_time_stop_blink": "Телепорт в остановленном времени",
-            "action.rotp_twu.twu_grab_throw": "Схватить / Швырнуть",
-            "rotp_twu.message.grabbed": "Схвачено! Повтори, чтобы швырнуть",
+            "action.rotp_twu.twu_grab": "Схватить",
+            "action.rotp_twu.twu_throw": "Швырнуть",
+            "rotp_twu.message.grabbed": "Схвачено!",
             "rotp_twu.message.nothing": "Нечего хватать",
-            "rotp_twu.message.escaped": "Вырвался!",
-            "action.rotp_twu.twu_air_barrage": "Воздушный шквал"
+            "rotp_twu.message.not_holding": "Нечего швырять",
+            "rotp_twu.message.escaped": "Вырвался!"
           }
           EOF
 
@@ -244,32 +246,22 @@ jobs:
           import com.github.standobyte.jojo.entity.stand.StandEntity;
           import com.rotpaddon.twu.AddonMain;
 
-          import net.minecraft.block.BlockState;
           import net.minecraft.entity.Entity;
           import net.minecraft.entity.LivingEntity;
           import net.minecraft.entity.MobEntity;
-          import net.minecraft.entity.item.FallingBlockEntity;
           import net.minecraft.entity.player.PlayerEntity;
-          import net.minecraft.particles.ParticleTypes;
           import net.minecraft.util.DamageSource;
-          import net.minecraft.util.SoundCategory;
-          import net.minecraft.util.SoundEvents;
           import net.minecraft.util.math.AxisAlignedBB;
-          import net.minecraft.util.math.BlockPos;
-          import net.minecraft.util.math.BlockRayTraceResult;
-          import net.minecraft.util.math.RayTraceContext;
-          import net.minecraft.util.math.RayTraceResult;
           import net.minecraft.util.math.vector.Vector3d;
           import net.minecraft.util.text.TranslationTextComponent;
           import net.minecraft.world.World;
-          import net.minecraft.world.server.ServerWorld;
           import net.minecraftforge.event.TickEvent;
           import net.minecraftforge.event.entity.player.PlayerEvent;
           import net.minecraftforge.eventbus.api.SubscribeEvent;
           import net.minecraftforge.fml.common.Mod;
 
-          // Grab (held in the Stand's hand, the victim struggles and may break free) / throw,
-          // and the air barrage: toss a mob up and hit it many times in the air.
+          // Grab a mob with the Stand (it is held in the Stand's hand, struggles and may break free),
+          // then throw it like a projectile.
           @Mod.EventBusSubscriber(modid = AddonMain.MOD_ID)
           public class TWUGrabHandler {
               private static final double RANGE = 6.0D;
@@ -278,12 +270,6 @@ jobs:
               private static final float HIT_DAMAGE = 8.0F;
               private static final float IMPACT_DAMAGE = 6.0F;
               private static final float STRUGGLE_LIMIT = 100.0F;
-
-              private static final double LAUNCH_SPEED = 0.85D;
-              private static final int RISE_TICKS = 8;
-              private static final int BARRAGE_TICKS = 24;
-              private static final float AIR_HIT_DAMAGE = 2.0F;
-              private static final float SLAM_DAMAGE = 6.0F;
 
               private static class Held {
                   final Entity entity;
@@ -298,28 +284,13 @@ jobs:
                   Thrown(Entity entity) { this.entity = entity; }
               }
 
-              private static class Barrage {
-                  final LivingEntity target;
-                  int ticks = 0;
-                  Barrage(LivingEntity target) { this.target = target; }
-              }
-
               private static final Map<UUID, Held> HELD = new HashMap<>();
               private static final Map<UUID, List<Thrown>> THROWN = new HashMap<>();
-              private static final Map<UUID, List<Barrage>> BARRAGES = new HashMap<>();
 
               // ------------------------------------------------------------------ actions
 
-              public static void grabOrThrow(PlayerEntity player, StandEntity stand) {
-                  if (HELD.containsKey(player.getUUID())) {
-                      throwHeld(player);
-                  }
-                  else {
-                      tryGrab(player, stand);
-                  }
-              }
-
-              public static void startAirBarrage(PlayerEntity player) {
+              public static void grab(PlayerEntity player, StandEntity stand) {
+                  if (HELD.containsKey(player.getUUID())) return;
                   LivingEntity target = findLivingTarget(player);
                   if (target == null) {
                       player.displayClientMessage(new TranslationTextComponent("rotp_twu.message.nothing"), true);
@@ -328,9 +299,24 @@ jobs:
                   if (target instanceof MobEntity) {
                       ((MobEntity) target).setNoAi(true);
                   }
-                  target.setDeltaMovement(0.0D, LAUNCH_SPEED, 0.0D);
-                  target.hurtMarked = true;
-                  BARRAGES.computeIfAbsent(player.getUUID(), id -> new ArrayList<>()).add(new Barrage(target));
+                  target.setNoGravity(true);
+                  HELD.put(player.getUUID(), new Held(target, stand));
+                  player.displayClientMessage(new TranslationTextComponent("rotp_twu.message.grabbed"), true);
+              }
+
+              public static void throwHeld(PlayerEntity player) {
+                  Held held = HELD.remove(player.getUUID());
+                  if (held == null) {
+                      player.displayClientMessage(new TranslationTextComponent("rotp_twu.message.not_holding"), true);
+                      return;
+                  }
+                  Entity entity = held.entity;
+                  if (!entity.isAlive()) return;
+                  release(entity);
+                  Vector3d look = player.getLookAngle();
+                  entity.setDeltaMovement(look.x * THROW_SPEED, look.y * THROW_SPEED + 0.3D, look.z * THROW_SPEED);
+                  entity.hurtMarked = true;
+                  THROWN.computeIfAbsent(player.getUUID(), id -> new ArrayList<>()).add(new Thrown(entity));
               }
 
               private static LivingEntity findLivingTarget(PlayerEntity player) {
@@ -354,56 +340,6 @@ jobs:
                       }
                   }
                   return best;
-              }
-
-              private static void tryGrab(PlayerEntity player, StandEntity stand) {
-                  World world = player.level;
-
-                  // 1) the nearest mob on the line of sight
-                  LivingEntity best = findLivingTarget(player);
-                  if (best != null) {
-                      if (best instanceof MobEntity) {
-                          ((MobEntity) best).setNoAi(true);
-                      }
-                      best.setNoGravity(true);
-                      HELD.put(player.getUUID(), new Held(best, stand));
-                      player.displayClientMessage(new TranslationTextComponent("rotp_twu.message.grabbed"), true);
-                      return;
-                  }
-
-                  // 2) otherwise a block
-                  Vector3d from = player.getEyePosition(1.0F);
-                  Vector3d to = from.add(player.getLookAngle().scale(RANGE));
-                  BlockRayTraceResult ray = world.clip(new RayTraceContext(from, to,
-                          RayTraceContext.BlockMode.OUTLINE, RayTraceContext.FluidMode.NONE, player));
-                  if (ray.getType() == RayTraceResult.Type.BLOCK) {
-                      BlockPos pos = ray.getBlockPos();
-                      BlockState state = world.getBlockState(pos);
-                      float hardness = state.getDestroySpeed(world, pos);
-                      if (!state.isAir(world, pos) && hardness >= 0.0F && hardness <= 50.0F && !state.hasTileEntity()) {
-                          // the falling block entity removes the original block on its first tick
-                          FallingBlockEntity block = new FallingBlockEntity(world,
-                                  pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D, state);
-                          block.setNoGravity(true);
-                          world.addFreshEntity(block);
-                          HELD.put(player.getUUID(), new Held(block, stand));
-                          player.displayClientMessage(new TranslationTextComponent("rotp_twu.message.grabbed"), true);
-                          return;
-                      }
-                  }
-                  player.displayClientMessage(new TranslationTextComponent("rotp_twu.message.nothing"), true);
-              }
-
-              private static void throwHeld(PlayerEntity player) {
-                  Held held = HELD.remove(player.getUUID());
-                  if (held == null) return;
-                  Entity entity = held.entity;
-                  if (!entity.isAlive()) return;
-                  release(entity);
-                  Vector3d look = player.getLookAngle();
-                  entity.setDeltaMovement(look.x * THROW_SPEED, look.y * THROW_SPEED + 0.3D, look.z * THROW_SPEED);
-                  entity.hurtMarked = true;
-                  THROWN.computeIfAbsent(player.getUUID(), id -> new ArrayList<>()).add(new Thrown(entity));
               }
 
               private static void release(Entity entity) {
@@ -432,10 +368,8 @@ jobs:
                   PlayerEntity player = event.player;
                   if (player.level.isClientSide) return;
                   UUID id = player.getUUID();
-
                   tickHeld(player, id);
                   tickThrown(player, id);
-                  tickBarrages(player, id);
               }
 
               private static void tickHeld(PlayerEntity player, UUID id) {
@@ -462,7 +396,7 @@ jobs:
                   e.setPos(pos.x, pos.y - e.getBbHeight() / 2.0D, pos.z);
                   e.setDeltaMovement(Vector3d.ZERO);
                   e.fallDistance = 0.0F;
-                  e.hurtMarked = true;
+                e.hurtMarked = true;
               }
 
               private static void tickThrown(PlayerEntity player, UUID id) {
@@ -493,70 +427,11 @@ jobs:
                   if (list.isEmpty()) THROWN.remove(id);
               }
 
-              private static void tickBarrages(PlayerEntity player, UUID id) {
-                  List<Barrage> list = BARRAGES.get(id);
-                  if (list == null) return;
-                  Iterator<Barrage> it = list.iterator();
-                  while (it.hasNext()) {
-                      Barrage b = it.next();
-                      LivingEntity t = b.target;
-                      b.ticks++;
-                      if (!player.isAlive() || !t.isAlive()) {
-                          endBarrage(t);
-                          it.remove();
-                          continue;
-                      }
-                      if (b.ticks < RISE_TICKS) continue;   // still flying up
-
-                      int phase = b.ticks - RISE_TICKS;
-                      if (phase < BARRAGE_TICKS) {
-                          // hang in the air and take a flurry of punches
-                          t.setNoGravity(true);
-                          t.setDeltaMovement(Vector3d.ZERO);
-                          t.fallDistance = 0.0F;
-                          t.hurtMarked = true;
-                          if (phase % 2 == 0) {
-                              t.invulnerableTime = 0;
-                              t.hurt(DamageSource.playerAttack(player), AIR_HIT_DAMAGE);
-                              if (player.level instanceof ServerWorld) {
-                                  ((ServerWorld) player.level).sendParticles(ParticleTypes.CRIT,
-                                          t.getX(), t.getY() + t.getBbHeight() / 2.0D, t.getZ(), 6, 0.35D, 0.35D, 0.35D, 0.2D);
-                              }
-                              player.level.playSound(null, t.getX(), t.getY(), t.getZ(),
-                                      SoundEvents.PLAYER_ATTACK_STRONG, SoundCategory.PLAYERS, 1.0F, 1.0F + (phase % 4) * 0.1F);
-                          }
-                      }
-                      else {
-                          // the finisher: slam the target down
-                          endBarrage(t);
-                          t.setDeltaMovement(0.0D, -1.6D, 0.0D);
-                          t.hurtMarked = true;
-                          t.invulnerableTime = 0;
-                          t.hurt(DamageSource.playerAttack(player), SLAM_DAMAGE);
-                          it.remove();
-                      }
-                  }
-                  if (list.isEmpty()) BARRAGES.remove(id);
-              }
-
-              private static void endBarrage(LivingEntity target) {
-                  target.setNoGravity(false);
-                  if (target instanceof MobEntity) {
-                      ((MobEntity) target).setNoAi(false);
-                  }
-              }
-
               @SubscribeEvent
               public static void onPlayerLogout(PlayerEvent.PlayerLoggedOutEvent event) {
                   UUID id = event.getPlayer().getUUID();
                   Held held = HELD.remove(id);
                   if (held != null && held.entity.isAlive()) release(held.entity);
-                  List<Barrage> list = BARRAGES.remove(id);
-                  if (list != null) {
-                      for (Barrage b : list) {
-                          if (b.target.isAlive()) endBarrage(b.target);
-                      }
-                  }
                   THROWN.remove(id);
               }
           }
@@ -574,11 +449,13 @@ jobs:
           import net.minecraft.entity.player.PlayerEntity;
           import net.minecraft.world.World;
 
-          // First use: grab the mob / block you are looking at. Second use: throw it.
+          // Two actions share this class: "grab" (throwMode = false) and "throw" (throwMode = true).
           public class TWUGrabThrow extends StandEntityAction {
+              private final boolean throwMode;
 
-              public TWUGrabThrow(StandEntityAction.Builder builder) {
+              public TWUGrabThrow(StandEntityAction.Builder builder, boolean throwMode) {
                   super(builder);
+                  this.throwMode = throwMode;
               }
 
               @Override
@@ -586,38 +463,84 @@ jobs:
                   if (world.isClientSide) return;
                   LivingEntity user = standEntity.getUser();
                   if (user instanceof PlayerEntity) {
-                      TWUGrabHandler.grabOrThrow((PlayerEntity) user, standEntity);
+                      if (throwMode) {
+                          TWUGrabHandler.throwHeld((PlayerEntity) user);
+                      }
+                      else {
+                          TWUGrabHandler.grab((PlayerEntity) user, standEntity);
+                      }
                   }
               }
           }
           EOF
 
-          cat > $P/action/TWUAirBarrage.java <<'EOF'
+          cat > $P/action/TWUPoses.java <<'EOF'
           package com.rotpaddon.twu.action;
 
-          import com.github.standobyte.jojo.action.stand.StandEntityAction;
+          import com.github.standobyte.jojo.entity.stand.StandPose;
+
+          public class TWUPoses {
+              // the pose of the Stand while its user moves in stopped time
+              public static final StandPose TIME_STOP = new StandPose("twu_time_stop");
+          }
+          EOF
+
+          cat > $P/action/TWUTimeStopPoseHandler.java <<'EOF'
+          package com.rotpaddon.twu.action;
+
+          import java.util.HashSet;
+          import java.util.Set;
+          import java.util.UUID;
+
+          import com.github.standobyte.jojo.capability.world.TimeStopHandler;
           import com.github.standobyte.jojo.entity.stand.StandEntity;
-          import com.github.standobyte.jojo.entity.stand.StandEntityTask;
+          import com.github.standobyte.jojo.entity.stand.StandPose;
+          import com.github.standobyte.jojo.init.ModStatusEffects;
+          import com.github.standobyte.jojo.power.impl.stand.IStandManifestation;
           import com.github.standobyte.jojo.power.impl.stand.IStandPower;
+          import com.rotpaddon.twu.AddonMain;
+          import com.rotpaddon.twu.init.InitStands;
 
-          import net.minecraft.entity.LivingEntity;
           import net.minecraft.entity.player.PlayerEntity;
-          import net.minecraft.world.World;
+          import net.minecraftforge.event.TickEvent;
+          import net.minecraftforge.eventbus.api.SubscribeEvent;
+          import net.minecraftforge.fml.common.Mod;
 
-          // Toss the mob you are looking at into the air and hit it with a flurry of punches.
-          public class TWUAirBarrage extends StandEntityAction {
+          // While the Stand's user moves in stopped time, the Stand holds the time stop pose.
+          @Mod.EventBusSubscriber(modid = AddonMain.MOD_ID)
+          public class TWUTimeStopPoseHandler {
+              private static final Set<UUID> POSED = new HashSet<>();
 
-              public TWUAirBarrage(StandEntityAction.Builder builder) {
-                  super(builder);
+              @SubscribeEvent
+              public static void onPlayerTick(TickEvent.PlayerTickEvent event) {
+                  if (event.phase != TickEvent.Phase.END) return;
+                  PlayerEntity player = event.player;
+                  if (player.level.isClientSide) return;
+                  UUID id = player.getUUID();
+                  boolean movesInStoppedTime = TimeStopHandler.isTimeStopped(player.level, player.blockPosition())
+                          && !player.hasEffect(ModStatusEffects.TIME_STOP.get());
+                  if (movesInStoppedTime) {
+                      if (setPose(player, TWUPoses.TIME_STOP)) {
+                          POSED.add(id);
+                      }
+                  }
+                  else if (POSED.remove(id)) {
+                      setPose(player, StandPose.IDLE);
+                  }
               }
 
-              @Override
-              public void standPerform(World world, StandEntity standEntity, IStandPower userPower, StandEntityTask task) {
-                  if (world.isClientSide) return;
-                  LivingEntity user = standEntity.getUser();
-                  if (user instanceof PlayerEntity) {
-                      TWUGrabHandler.startAirBarrage((PlayerEntity) user);
-                  }
+              private static boolean setPose(PlayerEntity player, StandPose pose) {
+                  boolean[] done = new boolean[1];
+                  IStandPower.getStandPowerOptional(player).ifPresent(power -> {
+                      if (power.getType().equals(InitStands.STAND_THE_WORLD_ULTIMATE.getStandType())) {
+                          IStandManifestation manifestation = power.getStandManifestation();
+                          if (manifestation instanceof StandEntity) {
+                              ((StandEntity) manifestation).setStandPose(pose);
+                              done[0] = true;
+                          }
+                      }
+                  });
+                  return done[0];
               }
           }
           EOF
@@ -636,6 +559,7 @@ jobs:
           import com.github.standobyte.jojo.action.stand.TimeStop;
           import com.github.standobyte.jojo.action.stand.TimeStopInstant;
           import com.github.standobyte.jojo.entity.stand.StandEntityType;
+          import com.github.standobyte.jojo.entity.stand.StandPose;
           import com.github.standobyte.jojo.init.ModSounds;
           import com.github.standobyte.jojo.init.power.stand.EntityStandRegistryObject;
           import com.github.standobyte.jojo.init.power.stand.ModStandsInit;
@@ -644,7 +568,6 @@ jobs:
           import com.github.standobyte.jojo.power.impl.stand.type.EntityStandType;
           import com.github.standobyte.jojo.power.impl.stand.type.StandType;
           import com.rotpaddon.twu.AddonMain;
-          import com.rotpaddon.twu.action.TWUAirBarrage;
           import com.rotpaddon.twu.action.TWUGrabThrow;
           import com.rotpaddon.twu.action.TWULaunchPunch;
           import com.rotpaddon.twu.entity.TheWorldUltimateEntity;
@@ -679,20 +602,21 @@ jobs:
                               .punchSound(ModSounds.STAND_PUNCH_HEAVY)
                               .partsRequired(StandPart.ARMS)));
 
-              // Grab a mob or block, use again to throw it
-              public static final RegistryObject<StandEntityAction> TWU_GRAB_THROW = ACTIONS.register("twu_grab_throw",
+              // Grab the mob you are looking at (it is held in the Stand's hand)
+              public static final RegistryObject<StandEntityAction> TWU_GRAB = ACTIONS.register("twu_grab",
                       () -> new TWUGrabThrow(new StandEntityAction.Builder()
+                              .standPose(StandPose.HEAVY_ATTACK)
                               .staminaCost(30.0F)
                               .standUserWalkSpeed(1.0F)
-                              .partsRequired(StandPart.ARMS)));
+                              .partsRequired(StandPart.ARMS), false));
 
-              // Toss a mob into the air and punch it many times
-              public static final RegistryObject<StandEntityAction> TWU_AIR_BARRAGE = ACTIONS.register("twu_air_barrage",
-                      () -> new TWUAirBarrage(new StandEntityAction.Builder()
-                              .staminaCost(60.0F)
-                              .cooldown(100)
+              // Throw the held mob
+              public static final RegistryObject<StandEntityAction> TWU_THROW = ACTIONS.register("twu_throw",
+                      () -> new TWUGrabThrow(new StandEntityAction.Builder()
+                              .standPose(StandPose.HEAVY_ATTACK_FINISHER)
+                              .staminaCost(20.0F)
                               .standUserWalkSpeed(1.0F)
-                              .partsRequired(StandPart.ARMS)));
+                              .partsRequired(StandPart.ARMS), true));
 
               public static final RegistryObject<StandEntityAction> TWU_BLOCK = ACTIONS.register("twu_block",
                       () -> new StandEntityBlock());
@@ -731,8 +655,8 @@ jobs:
                               .rightClickHotbar(
                                       TWU_BLOCK.get(),
                                       TWU_TIME_STOP.get(),
-                                      TWU_GRAB_THROW.get(),
-                                      TWU_AIR_BARRAGE.get()
+                                      TWU_GRAB.get(),
+                                      TWU_THROW.get()
                                       )
                               .defaultStats(TimeStopperStandStats.class, new TimeStopperStandStats.Builder()
                                       .tier(6)
@@ -745,7 +669,7 @@ jobs:
                               .build(),
 
                               InitEntities.ENTITIES,
-                              () -> new StandEntityType<TheWorldUltimateEntity>(TheWorldUltimateEntity::new, 0.805F, 2.4725F)
+                              () -> new StandEntityType<TheWorldUltimateEntity>(TheWorldUltimateEntity::new, 0.7F, 2.15F)
                               .summonSound(InitSounds.SUMMON_OR_DEFAULT)
                               .unsummonSound(ModSounds.STAND_UNSUMMON_DEFAULT))
                       .withDefaultStandAttributes();
@@ -782,7 +706,6 @@ jobs:
           import com.github.standobyte.jojo.client.render.entity.model.stand.StandEntityModel;
           import com.github.standobyte.jojo.client.render.entity.model.stand.StandModelRegistry;
           import com.github.standobyte.jojo.client.render.entity.renderer.stand.StandEntityRenderer;
-          import com.mojang.blaze3d.matrix.MatrixStack;
           import com.rotpaddon.twu.AddonMain;
           import com.rotpaddon.twu.entity.TheWorldUltimateEntity;
 
@@ -790,18 +713,11 @@ jobs:
           import net.minecraft.util.ResourceLocation;
 
           public class TWURenderer extends StandEntityRenderer<TheWorldUltimateEntity, StandEntityModel<TheWorldUltimateEntity>> {
-              public static final float SCALE = 1.15F;   // the Stand is 15% bigger
 
               public TWURenderer(EntityRendererManager renderManager) {
                   super(renderManager,
                           StandModelRegistry.registerModel(new ResourceLocation(AddonMain.MOD_ID, "the_world_ultimate"), TWUModel::new),
                           new ResourceLocation(AddonMain.MOD_ID, "textures/entity/stand/the_world_ultimate.png"), 0);
-              }
-
-              @Override
-              protected void scale(TheWorldUltimateEntity entity, MatrixStack matrixStack, float partialTick) {
-                  super.scale(entity, matrixStack, partialTick);
-                  matrixStack.scale(SCALE, SCALE, SCALE);
               }
           }
           EOF
@@ -849,8 +765,7 @@ jobs:
                           RotationAngle.fromDegrees(leftLeg, 0.0F, 0.0F, -10.0F),
                           RotationAngle.fromDegrees(leftLowerLeg, 52.5F, 0.0F, 0.0F),
                           RotationAngle.fromDegrees(rightLeg, -25.0F, 0.0F, 10.0F),
-                          RotationAngle.fromDegrees(rightLowerLeg, 60.0F, 0.0F, 0.0F)
-                      },
+                          RotationAngle.fromDegrees(rightLowerLeg, 60.0F, 0.0F, 0.0F),
                       new RotationAngle[] {
                           RotationAngle.fromDegrees(head, 12.5F, 0.0F, 0.0F),
                           RotationAngle.fromDegrees(body, -10.0F, 32.5F, 0.0F),
