@@ -62,6 +62,7 @@ jobs:
           cp $A/action/example_stand_finisher_punch.png $R/assets/rotp_twu/textures/action/twu_time_stop.png
           cp $A/action/example_stand_block.png $R/assets/rotp_twu/textures/action/twu_time_resume.png
           cp $A/action/example_stand_barrage.png $R/assets/rotp_twu/textures/action/twu_grab_throw.png
+          cp $A/action/example_stand_finisher_punch.png $R/assets/rotp_twu/textures/action/twu_air_barrage.png
           cp $A/action/example_stand_heavy_punch.png $R/assets/rotp_twu/textures/action/twu_time_stop_blink.png
           if [ -f "$BASE/extra/the_world_ultimate.png" ]; then cp "$BASE/extra/the_world_ultimate.png" $R/assets/rotp_twu/textures/entity/stand/the_world_ultimate.png; fi
           if [ -f "$BASE/extra/power.png" ]; then cp "$BASE/extra/power.png" $R/assets/rotp_twu/textures/power/the_world_ultimate.png; fi
@@ -79,7 +80,9 @@ jobs:
             "action.rotp_twu.twu_time_stop_blink": "Time Stop Blink",
             "action.rotp_twu.twu_grab_throw": "Grab / Throw",
             "rotp_twu.message.grabbed": "Grabbed! Use again to throw",
-            "rotp_twu.message.nothing": "Nothing to grab"
+            "rotp_twu.message.nothing": "Nothing to grab",
+            "rotp_twu.message.escaped": "It broke free!",
+            "action.rotp_twu.twu_air_barrage": "Air Barrage"
           }
           EOF
           cat > $R/assets/rotp_twu/lang/ru_ru.json <<'EOF'
@@ -95,7 +98,9 @@ jobs:
             "action.rotp_twu.twu_time_stop_blink": "Телепорт в остановленном времени",
             "action.rotp_twu.twu_grab_throw": "Схватить / Швырнуть",
             "rotp_twu.message.grabbed": "Схвачено! Повтори, чтобы швырнуть",
-            "rotp_twu.message.nothing": "Нечего хватать"
+            "rotp_twu.message.nothing": "Нечего хватать",
+            "rotp_twu.message.escaped": "Вырвался!",
+            "action.rotp_twu.twu_air_barrage": "Воздушный шквал"
           }
           EOF
 
@@ -245,7 +250,10 @@ jobs:
           import net.minecraft.entity.MobEntity;
           import net.minecraft.entity.item.FallingBlockEntity;
           import net.minecraft.entity.player.PlayerEntity;
+          import net.minecraft.particles.ParticleTypes;
           import net.minecraft.util.DamageSource;
+          import net.minecraft.util.SoundCategory;
+          import net.minecraft.util.SoundEvents;
           import net.minecraft.util.math.AxisAlignedBB;
           import net.minecraft.util.math.BlockPos;
           import net.minecraft.util.math.BlockRayTraceResult;
@@ -254,23 +262,34 @@ jobs:
           import net.minecraft.util.math.vector.Vector3d;
           import net.minecraft.util.text.TranslationTextComponent;
           import net.minecraft.world.World;
+          import net.minecraft.world.server.ServerWorld;
           import net.minecraftforge.event.TickEvent;
           import net.minecraftforge.event.entity.player.PlayerEvent;
           import net.minecraftforge.eventbus.api.SubscribeEvent;
           import net.minecraftforge.fml.common.Mod;
 
-          // Grab a mob (or a block) with the Stand, hold it in front of you, press again to throw it.
+          // Grab (held in the Stand's hand, the victim struggles and may break free) / throw,
+          // and the air barrage: toss a mob up and hit it many times in the air.
           @Mod.EventBusSubscriber(modid = AddonMain.MOD_ID)
           public class TWUGrabHandler {
               private static final double RANGE = 6.0D;
-              private static final double HOLD_DISTANCE = 2.5D;
+              private static final double HAND_FORWARD = 1.3D;
               private static final double THROW_SPEED = 2.0D;
               private static final float HIT_DAMAGE = 8.0F;
               private static final float IMPACT_DAMAGE = 6.0F;
+              private static final float STRUGGLE_LIMIT = 100.0F;
+
+              private static final double LAUNCH_SPEED = 0.85D;
+              private static final int RISE_TICKS = 8;
+              private static final int BARRAGE_TICKS = 24;
+              private static final float AIR_HIT_DAMAGE = 2.0F;
+              private static final float SLAM_DAMAGE = 6.0F;
 
               private static class Held {
                   final Entity entity;
-                  Held(Entity entity) { this.entity = entity; }
+                  final StandEntity stand;
+                  float struggle = 0.0F;
+                  Held(Entity entity, StandEntity stand) { this.entity = entity; this.stand = stand; }
               }
 
               private static class Thrown {
@@ -279,26 +298,47 @@ jobs:
                   Thrown(Entity entity) { this.entity = entity; }
               }
 
+              private static class Barrage {
+                  final LivingEntity target;
+                  int ticks = 0;
+                  Barrage(LivingEntity target) { this.target = target; }
+              }
+
               private static final Map<UUID, Held> HELD = new HashMap<>();
               private static final Map<UUID, List<Thrown>> THROWN = new HashMap<>();
+              private static final Map<UUID, List<Barrage>> BARRAGES = new HashMap<>();
 
-              public static void grabOrThrow(PlayerEntity player) {
+              // ------------------------------------------------------------------ actions
+
+              public static void grabOrThrow(PlayerEntity player, StandEntity stand) {
                   if (HELD.containsKey(player.getUUID())) {
                       throwHeld(player);
                   }
                   else {
-                      tryGrab(player);
+                      tryGrab(player, stand);
                   }
               }
 
-              private static void tryGrab(PlayerEntity player) {
+              public static void startAirBarrage(PlayerEntity player) {
+                  LivingEntity target = findLivingTarget(player);
+                  if (target == null) {
+                      player.displayClientMessage(new TranslationTextComponent("rotp_twu.message.nothing"), true);
+                      return;
+                  }
+                  if (target instanceof MobEntity) {
+                      ((MobEntity) target).setNoAi(true);
+                  }
+                  target.setDeltaMovement(0.0D, LAUNCH_SPEED, 0.0D);
+                  target.hurtMarked = true;
+                  BARRAGES.computeIfAbsent(player.getUUID(), id -> new ArrayList<>()).add(new Barrage(target));
+              }
+
+              private static LivingEntity findLivingTarget(PlayerEntity player) {
                   World world = player.level;
                   Vector3d from = player.getEyePosition(1.0F);
                   Vector3d look = player.getLookAngle();
                   Vector3d to = from.add(look.scale(RANGE));
-
-                  // 1) the nearest mob on the line of sight
-                  Entity best = null;
+                  LivingEntity best = null;
                   double bestDist = RANGE * RANGE;
                   AxisAlignedBB area = player.getBoundingBox().expandTowards(look.scale(RANGE)).inflate(1.0D);
                   List<Entity> candidates = world.getEntities(player, area,
@@ -309,21 +349,31 @@ jobs:
                           double dist = from.distanceToSqr(hit.get());
                           if (dist < bestDist) {
                               bestDist = dist;
-                              best = e;
+                              best = (LivingEntity) e;
                           }
                       }
                   }
+                  return best;
+              }
+
+              private static void tryGrab(PlayerEntity player, StandEntity stand) {
+                  World world = player.level;
+
+                  // 1) the nearest mob on the line of sight
+                  LivingEntity best = findLivingTarget(player);
                   if (best != null) {
                       if (best instanceof MobEntity) {
                           ((MobEntity) best).setNoAi(true);
                       }
                       best.setNoGravity(true);
-                      HELD.put(player.getUUID(), new Held(best));
+                      HELD.put(player.getUUID(), new Held(best, stand));
                       player.displayClientMessage(new TranslationTextComponent("rotp_twu.message.grabbed"), true);
                       return;
                   }
 
                   // 2) otherwise a block
+                  Vector3d from = player.getEyePosition(1.0F);
+                  Vector3d to = from.add(player.getLookAngle().scale(RANGE));
                   BlockRayTraceResult ray = world.clip(new RayTraceContext(from, to,
                           RayTraceContext.BlockMode.OUTLINE, RayTraceContext.FluidMode.NONE, player));
                   if (ray.getType() == RayTraceResult.Type.BLOCK) {
@@ -336,7 +386,7 @@ jobs:
                                   pos.getX() + 0.5D, pos.getY(), pos.getZ() + 0.5D, state);
                           block.setNoGravity(true);
                           world.addFreshEntity(block);
-                          HELD.put(player.getUUID(), new Held(block));
+                          HELD.put(player.getUUID(), new Held(block, stand));
                           player.displayClientMessage(new TranslationTextComponent("rotp_twu.message.grabbed"), true);
                           return;
                       }
@@ -364,6 +414,18 @@ jobs:
                   }
               }
 
+              // the point where the Stand's hand is: in front of the Stand, at chest height
+              private static Vector3d handPos(PlayerEntity player, Held held) {
+                  Vector3d look = player.getLookAngle();
+                  Vector3d forward = new Vector3d(look.x, 0.0D, look.z).normalize();
+                  if (held.stand != null && held.stand.isAlive()) {
+                      return held.stand.position().add(forward.scale(HAND_FORWARD)).add(0.0D, held.stand.getBbHeight() * 0.65D, 0.0D);
+                  }
+                  return player.getEyePosition(1.0F).add(look.scale(2.5D));
+              }
+
+              // ------------------------------------------------------------------ events
+
               @SubscribeEvent
               public static void onPlayerTick(TickEvent.PlayerTickEvent event) {
                   if (event.phase != TickEvent.Phase.END) return;
@@ -371,46 +433,116 @@ jobs:
                   if (player.level.isClientSide) return;
                   UUID id = player.getUUID();
 
+                  tickHeld(player, id);
+                  tickThrown(player, id);
+                  tickBarrages(player, id);
+              }
+
+              private static void tickHeld(PlayerEntity player, UUID id) {
                   Held held = HELD.get(id);
-                  if (held != null) {
-                      if (!player.isAlive() || !held.entity.isAlive() || held.entity.level != player.level) {
+                  if (held == null) return;
+                  Entity e = held.entity;
+                  boolean standGone = held.stand != null && !held.stand.isAlive();
+                  if (!player.isAlive() || !e.isAlive() || e.level != player.level || standGone) {
+                      HELD.remove(id);
+                      if (e.isAlive()) release(e);
+                      return;
+                  }
+                  // the victim struggles; stronger (more health) victims break free faster
+                  if (e instanceof LivingEntity) {
+                      held.struggle += 0.5F + ((LivingEntity) e).getMaxHealth() * 0.04F;
+                      if (held.struggle >= STRUGGLE_LIMIT) {
                           HELD.remove(id);
-                          if (held.entity.isAlive()) release(held.entity);
-                      }
-                      else {
-                          Vector3d pos = player.getEyePosition(1.0F).add(player.getLookAngle().scale(HOLD_DISTANCE));
-                          held.entity.setPos(pos.x, pos.y - held.entity.getBbHeight() / 2.0D, pos.z);
-                          held.entity.setDeltaMovement(Vector3d.ZERO);
-                          held.entity.fallDistance = 0.0F;
-                          held.entity.hurtMarked = true;
+                          release(e);
+                          player.displayClientMessage(new TranslationTextComponent("rotp_twu.message.escaped"), true);
+                          return;
                       }
                   }
+                  Vector3d pos = handPos(player, held);
+                  e.setPos(pos.x, pos.y - e.getBbHeight() / 2.0D, pos.z);
+                  e.setDeltaMovement(Vector3d.ZERO);
+                  e.fallDistance = 0.0F;
+                  e.hurtMarked = true;
+              }
 
+              private static void tickThrown(PlayerEntity player, UUID id) {
                   List<Thrown> list = THROWN.get(id);
-                  if (list != null) {
-                      Iterator<Thrown> it = list.iterator();
-                      while (it.hasNext()) {
-                          Thrown t = it.next();
-                          Entity e = t.entity;
-                          t.ticks++;
-                          if (!e.isAlive() || t.ticks > 80) {
-                              it.remove();
-                              continue;
+                  if (list == null) return;
+                  Iterator<Thrown> it = list.iterator();
+                  while (it.hasNext()) {
+                      Thrown t = it.next();
+                      Entity e = t.entity;
+                      t.ticks++;
+                      if (!e.isAlive() || t.ticks > 80) {
+                          it.remove();
+                          continue;
+                      }
+                      List<Entity> hits = player.level.getEntities(e, e.getBoundingBox().inflate(0.4D),
+                              x -> x instanceof LivingEntity && x != player && !(x instanceof StandEntity) && x.isAlive());
+                      boolean landed = t.ticks > 4 && (e.isOnGround() || e.horizontalCollision);
+                      if (t.ticks > 2 && (!hits.isEmpty() || landed)) {
+                          for (Entity victim : hits) {
+                              victim.hurt(DamageSource.playerAttack(player), HIT_DAMAGE);
                           }
-                          List<Entity> hits = player.level.getEntities(e, e.getBoundingBox().inflate(0.4D),
-                                  x -> x instanceof LivingEntity && x != player && !(x instanceof StandEntity) && x.isAlive());
-                          boolean landed = t.ticks > 4 && (e.isOnGround() || e.horizontalCollision);
-                          if (t.ticks > 2 && (!hits.isEmpty() || landed)) {
-                              for (Entity victim : hits) {
-                                  victim.hurt(DamageSource.playerAttack(player), HIT_DAMAGE);
+                          if (e instanceof LivingEntity) {
+                              e.hurt(DamageSource.playerAttack(player), IMPACT_DAMAGE);
+                          }
+                          it.remove();
+                      }
+                  }
+                  if (list.isEmpty()) THROWN.remove(id);
+              }
+
+              private static void tickBarrages(PlayerEntity player, UUID id) {
+                  List<Barrage> list = BARRAGES.get(id);
+                  if (list == null) return;
+                  Iterator<Barrage> it = list.iterator();
+                  while (it.hasNext()) {
+                      Barrage b = it.next();
+                      LivingEntity t = b.target;
+                      b.ticks++;
+                      if (!player.isAlive() || !t.isAlive()) {
+                          endBarrage(t);
+                          it.remove();
+                          continue;
+                      }
+                      if (b.ticks < RISE_TICKS) continue;   // still flying up
+
+                      int phase = b.ticks - RISE_TICKS;
+                      if (phase < BARRAGE_TICKS) {
+                          // hang in the air and take a flurry of punches
+                          t.setNoGravity(true);
+                          t.setDeltaMovement(Vector3d.ZERO);
+                          t.fallDistance = 0.0F;
+                          t.hurtMarked = true;
+                          if (phase % 2 == 0) {
+                              t.invulnerableTime = 0;
+                              t.hurt(DamageSource.playerAttack(player), AIR_HIT_DAMAGE);
+                              if (player.level instanceof ServerWorld) {
+                                  ((ServerWorld) player.level).sendParticles(ParticleTypes.CRIT,
+                                          t.getX(), t.getY() + t.getBbHeight() / 2.0D, t.getZ(), 6, 0.35D, 0.35D, 0.35D, 0.2D);
                               }
-                              if (e instanceof LivingEntity) {
-                                  e.hurt(DamageSource.playerAttack(player), IMPACT_DAMAGE);
-                              }
-                              it.remove();
+                              player.level.playSound(null, t.getX(), t.getY(), t.getZ(),
+                                      SoundEvents.PLAYER_ATTACK_STRONG, SoundCategory.PLAYERS, 1.0F, 1.0F + (phase % 4) * 0.1F);
                           }
                       }
-                      if (list.isEmpty()) THROWN.remove(id);
+                      else {
+                          // the finisher: slam the target down
+                          endBarrage(t);
+                          t.setDeltaMovement(0.0D, -1.6D, 0.0D);
+                          t.hurtMarked = true;
+                          t.invulnerableTime = 0;
+                          t.hurt(DamageSource.playerAttack(player), SLAM_DAMAGE);
+                          it.remove();
+                      }
+                  }
+                  if (list.isEmpty()) BARRAGES.remove(id);
+              }
+
+              private static void endBarrage(LivingEntity target) {
+                  target.setNoGravity(false);
+                  if (target instanceof MobEntity) {
+                      ((MobEntity) target).setNoAi(false);
                   }
               }
 
@@ -419,6 +551,12 @@ jobs:
                   UUID id = event.getPlayer().getUUID();
                   Held held = HELD.remove(id);
                   if (held != null && held.entity.isAlive()) release(held.entity);
+                  List<Barrage> list = BARRAGES.remove(id);
+                  if (list != null) {
+                      for (Barrage b : list) {
+                          if (b.target.isAlive()) endBarrage(b.target);
+                      }
+                  }
                   THROWN.remove(id);
               }
           }
@@ -448,7 +586,37 @@ jobs:
                   if (world.isClientSide) return;
                   LivingEntity user = standEntity.getUser();
                   if (user instanceof PlayerEntity) {
-                      TWUGrabHandler.grabOrThrow((PlayerEntity) user);
+                      TWUGrabHandler.grabOrThrow((PlayerEntity) user, standEntity);
+                  }
+              }
+          }
+          EOF
+
+          cat > $P/action/TWUAirBarrage.java <<'EOF'
+          package com.rotpaddon.twu.action;
+
+          import com.github.standobyte.jojo.action.stand.StandEntityAction;
+          import com.github.standobyte.jojo.entity.stand.StandEntity;
+          import com.github.standobyte.jojo.entity.stand.StandEntityTask;
+          import com.github.standobyte.jojo.power.impl.stand.IStandPower;
+
+          import net.minecraft.entity.LivingEntity;
+          import net.minecraft.entity.player.PlayerEntity;
+          import net.minecraft.world.World;
+
+          // Toss the mob you are looking at into the air and hit it with a flurry of punches.
+          public class TWUAirBarrage extends StandEntityAction {
+
+              public TWUAirBarrage(StandEntityAction.Builder builder) {
+                  super(builder);
+              }
+
+              @Override
+              public void standPerform(World world, StandEntity standEntity, IStandPower userPower, StandEntityTask task) {
+                  if (world.isClientSide) return;
+                  LivingEntity user = standEntity.getUser();
+                  if (user instanceof PlayerEntity) {
+                      TWUGrabHandler.startAirBarrage((PlayerEntity) user);
                   }
               }
           }
@@ -476,6 +644,7 @@ jobs:
           import com.github.standobyte.jojo.power.impl.stand.type.EntityStandType;
           import com.github.standobyte.jojo.power.impl.stand.type.StandType;
           import com.rotpaddon.twu.AddonMain;
+          import com.rotpaddon.twu.action.TWUAirBarrage;
           import com.rotpaddon.twu.action.TWUGrabThrow;
           import com.rotpaddon.twu.action.TWULaunchPunch;
           import com.rotpaddon.twu.entity.TheWorldUltimateEntity;
@@ -517,6 +686,14 @@ jobs:
                               .standUserWalkSpeed(1.0F)
                               .partsRequired(StandPart.ARMS)));
 
+              // Toss a mob into the air and punch it many times
+              public static final RegistryObject<StandEntityAction> TWU_AIR_BARRAGE = ACTIONS.register("twu_air_barrage",
+                      () -> new TWUAirBarrage(new StandEntityAction.Builder()
+                              .staminaCost(60.0F)
+                              .cooldown(100)
+                              .standUserWalkSpeed(1.0F)
+                              .partsRequired(StandPart.ARMS)));
+
               public static final RegistryObject<StandEntityAction> TWU_BLOCK = ACTIONS.register("twu_block",
                       () -> new StandEntityBlock());
 
@@ -554,7 +731,8 @@ jobs:
                               .rightClickHotbar(
                                       TWU_BLOCK.get(),
                                       TWU_TIME_STOP.get(),
-                                      TWU_GRAB_THROW.get()
+                                      TWU_GRAB_THROW.get(),
+                                      TWU_AIR_BARRAGE.get()
                                       )
                               .defaultStats(TimeStopperStandStats.class, new TimeStopperStandStats.Builder()
                                       .tier(6)
@@ -567,7 +745,7 @@ jobs:
                               .build(),
 
                               InitEntities.ENTITIES,
-                              () -> new StandEntityType<TheWorldUltimateEntity>(TheWorldUltimateEntity::new, 0.7F, 2.15F)
+                              () -> new StandEntityType<TheWorldUltimateEntity>(TheWorldUltimateEntity::new, 0.805F, 2.4725F)
                               .summonSound(InitSounds.SUMMON_OR_DEFAULT)
                               .unsummonSound(ModSounds.STAND_UNSUMMON_DEFAULT))
                       .withDefaultStandAttributes();
@@ -604,6 +782,7 @@ jobs:
           import com.github.standobyte.jojo.client.render.entity.model.stand.StandEntityModel;
           import com.github.standobyte.jojo.client.render.entity.model.stand.StandModelRegistry;
           import com.github.standobyte.jojo.client.render.entity.renderer.stand.StandEntityRenderer;
+          import com.mojang.blaze3d.matrix.MatrixStack;
           import com.rotpaddon.twu.AddonMain;
           import com.rotpaddon.twu.entity.TheWorldUltimateEntity;
 
@@ -611,11 +790,18 @@ jobs:
           import net.minecraft.util.ResourceLocation;
 
           public class TWURenderer extends StandEntityRenderer<TheWorldUltimateEntity, StandEntityModel<TheWorldUltimateEntity>> {
+              public static final float SCALE = 1.15F;   // the Stand is 15% bigger
 
               public TWURenderer(EntityRendererManager renderManager) {
                   super(renderManager,
                           StandModelRegistry.registerModel(new ResourceLocation(AddonMain.MOD_ID, "the_world_ultimate"), TWUModel::new),
                           new ResourceLocation(AddonMain.MOD_ID, "textures/entity/stand/the_world_ultimate.png"), 0);
+              }
+
+              @Override
+              protected void scale(TheWorldUltimateEntity entity, MatrixStack matrixStack, float partialTick) {
+                  super.scale(entity, matrixStack, partialTick);
+                  matrixStack.scale(SCALE, SCALE, SCALE);
               }
           }
           EOF
