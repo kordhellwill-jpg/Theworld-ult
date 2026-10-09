@@ -61,8 +61,9 @@ jobs:
           cp $A/action/example_stand_heavy_punch.png $R/assets/rotp_twu/textures/action/twu_launch_punch.png
           cp $A/action/example_stand_finisher_punch.png $R/assets/rotp_twu/textures/action/twu_time_stop.png
           cp $A/action/example_stand_block.png $R/assets/rotp_twu/textures/action/twu_time_resume.png
-          cp $A/action/example_stand_barrage.png $R/assets/rotp_twu/textures/action/twu_grab.png
-          cp $A/action/example_stand_heavy_punch.png $R/assets/rotp_twu/textures/action/twu_throw.png
+          cp $A/action/example_stand_barrage.png $R/assets/rotp_twu/textures/action/twu_grab_throw.png
+          cp $A/action/example_stand_finisher_punch.png $R/assets/rotp_twu/textures/action/twu_ground_slam.png
+          cp $A/action/example_stand_finisher_punch.png $R/assets/rotp_twu/textures/action/twu_ground_slam_break.png
           cp $A/action/example_stand_heavy_punch.png $R/assets/rotp_twu/textures/action/twu_time_stop_blink.png
           if [ -f "$BASE/extra/the_world_ultimate.png" ]; then cp "$BASE/extra/the_world_ultimate.png" $R/assets/rotp_twu/textures/entity/stand/the_world_ultimate.png; fi
           if [ -f "$BASE/extra/power.png" ]; then cp "$BASE/extra/power.png" $R/assets/rotp_twu/textures/power/the_world_ultimate.png; fi
@@ -78,8 +79,9 @@ jobs:
             "action.rotp_twu.twu_time_stop": "Time Stop (30s)",
             "action.rotp_twu.twu_time_resume": "Resume Time",
             "action.rotp_twu.twu_time_stop_blink": "Time Stop Blink",
-            "action.rotp_twu.twu_grab": "Grab",
-            "action.rotp_twu.twu_throw": "Throw",
+            "action.rotp_twu.twu_grab_throw": "Grab / Throw",
+            "action.rotp_twu.twu_ground_slam": "Ground Slam",
+            "action.rotp_twu.twu_ground_slam_break": "Ground Slam (breaks blocks)",
             "rotp_twu.message.grabbed": "Grabbed!",
             "rotp_twu.message.nothing": "Nothing to grab",
             "rotp_twu.message.not_holding": "Nothing to throw",
@@ -97,8 +99,9 @@ jobs:
             "action.rotp_twu.twu_time_stop": "Остановка времени (30 с)",
             "action.rotp_twu.twu_time_resume": "Возобновить время",
             "action.rotp_twu.twu_time_stop_blink": "Телепорт в остановленном времени",
-            "action.rotp_twu.twu_grab": "Схватить",
-            "action.rotp_twu.twu_throw": "Швырнуть",
+            "action.rotp_twu.twu_grab_throw": "Схватить / Швырнуть",
+            "action.rotp_twu.twu_ground_slam": "Удар по земле",
+            "action.rotp_twu.twu_ground_slam_break": "Удар по земле (ломает блоки)",
             "rotp_twu.message.grabbed": "Схвачено!",
             "rotp_twu.message.nothing": "Нечего хватать",
             "rotp_twu.message.not_holding": "Нечего швырять",
@@ -153,11 +156,7 @@ jobs:
           cat > $P/init/InitSounds.java <<'EOF'
           package com.rotpaddon.twu.init;
 
-          import java.util.function.Supplier;
-
-          import com.github.standobyte.jojo.init.ModSounds;
           import com.rotpaddon.twu.AddonMain;
-          import com.rotpaddon.twu.ExtraAssets;
 
           import net.minecraft.util.ResourceLocation;
           import net.minecraft.util.SoundEvent;
@@ -173,17 +172,14 @@ jobs:
                   return SOUNDS.register(name, () -> new SoundEvent(new ResourceLocation(AddonMain.MOD_ID, name)));
               }
 
-              // Sound files are optional: put .ogg files named like these into the repo folder extra/sounds/
+              // the .ogg files for these events are added to assets/rotp_twu/sounds/stand/
               public static final RegistryObject<SoundEvent> SUMMON = reg("twu_summon");
               public static final RegistryObject<SoundEvent> TIME_STOP = reg("twu_time_stop");
               public static final RegistryObject<SoundEvent> TIME_RESUME = reg("twu_time_resume");
               public static final RegistryObject<SoundEvent> BLINK = reg("twu_blink");
               public static final RegistryObject<SoundEvent> BARRAGE = reg("twu_barrage");
-
-              // If there is no twu_summon.ogg, the default RotP summon sound is used.
-              public static final Supplier<SoundEvent> SUMMON_OR_DEFAULT = ExtraAssets.HAS_SUMMON
-                      ? (Supplier<SoundEvent>) SUMMON
-                      : (Supplier<SoundEvent>) ModSounds.STAND_SUMMON_DEFAULT;
+              public static final RegistryObject<SoundEvent> MUDA = reg("twu_muda");
+              public static final RegistryObject<SoundEvent> HEAVY_PUNCH = reg("twu_heavy_punch");
           }
           EOF
 
@@ -304,6 +300,16 @@ jobs:
                   player.displayClientMessage(new TranslationTextComponent("rotp_twu.message.grabbed"), true);
               }
 
+              // one button: holding something -> throw it, otherwise grab
+              public static void toggle(PlayerEntity player, StandEntity stand) {
+                  if (HELD.containsKey(player.getUUID())) {
+                      throwHeld(player);
+                  }
+                  else {
+                      grab(player, stand);
+                  }
+              }
+
               public static void throwHeld(PlayerEntity player) {
                   Held held = HELD.remove(player.getUUID());
                   if (held == null) {
@@ -396,7 +402,7 @@ jobs:
                   e.setPos(pos.x, pos.y - e.getBbHeight() / 2.0D, pos.z);
                   e.setDeltaMovement(Vector3d.ZERO);
                   e.fallDistance = 0.0F;
-                e.hurtMarked = true;
+                  e.hurtMarked = true;
               }
 
               private static void tickThrown(PlayerEntity player, UUID id) {
@@ -449,13 +455,11 @@ jobs:
           import net.minecraft.entity.player.PlayerEntity;
           import net.minecraft.world.World;
 
-          // Two actions share this class: "grab" (throwMode = false) and "throw" (throwMode = true).
+          // One button: the first use grabs the mob you look at, the next use throws it.
           public class TWUGrabThrow extends StandEntityAction {
-              private final boolean throwMode;
 
-              public TWUGrabThrow(StandEntityAction.Builder builder, boolean throwMode) {
+              public TWUGrabThrow(StandEntityAction.Builder builder) {
                   super(builder);
-                  this.throwMode = throwMode;
               }
 
               @Override
@@ -463,12 +467,7 @@ jobs:
                   if (world.isClientSide) return;
                   LivingEntity user = standEntity.getUser();
                   if (user instanceof PlayerEntity) {
-                      if (throwMode) {
-                          TWUGrabHandler.throwHeld((PlayerEntity) user);
-                      }
-                      else {
-                          TWUGrabHandler.grab((PlayerEntity) user, standEntity);
-                      }
+                      TWUGrabHandler.toggle((PlayerEntity) user, standEntity);
                   }
               }
           }
@@ -545,6 +544,168 @@ jobs:
           }
           EOF
 
+          cat > $P/action/TWUGroundSlam.java <<'EOF'
+          package com.rotpaddon.twu.action;
+
+          import com.github.standobyte.jojo.action.stand.StandEntityAction;
+          import com.github.standobyte.jojo.entity.stand.StandEntity;
+          import com.github.standobyte.jojo.entity.stand.StandEntityTask;
+          import com.github.standobyte.jojo.power.impl.stand.IStandPower;
+
+          import net.minecraft.block.BlockState;
+          import net.minecraft.entity.Entity;
+          import net.minecraft.entity.LivingEntity;
+          import net.minecraft.entity.player.PlayerEntity;
+          import net.minecraft.particles.BlockParticleData;
+          import net.minecraft.particles.ParticleTypes;
+          import net.minecraft.util.DamageSource;
+          import net.minecraft.util.SoundCategory;
+          import net.minecraft.util.SoundEvents;
+          import net.minecraft.util.math.AxisAlignedBB;
+          import net.minecraft.util.math.BlockPos;
+          import net.minecraft.util.math.vector.Vector3d;
+          import net.minecraft.world.World;
+          import net.minecraft.world.server.ServerWorld;
+
+          // The Stand steps 2 blocks forward and smashes the ground with its hand: every mob around
+          // the impact is knocked back and takes a little damage. The shift version also breaks blocks.
+          public class TWUGroundSlam extends StandEntityAction {
+              private static final double FORWARD = 2.0D;
+              private static final double RADIUS = 3.5D;
+              private static final float DAMAGE = 4.0F;
+              private static final float MAX_BREAK_HARDNESS = 5.0F;
+
+              private final boolean breakBlocks;
+
+              public TWUGroundSlam(StandEntityAction.Builder builder, boolean breakBlocks) {
+                  super(builder);
+                  this.breakBlocks = breakBlocks;
+              }
+
+              @Override
+              public void standPerform(World world, StandEntity standEntity, IStandPower userPower, StandEntityTask task) {
+                  if (world.isClientSide) return;
+                  LivingEntity user = standEntity.getUser();
+                  if (user == null) return;
+
+                  Vector3d look = user.getLookAngle();
+                  Vector3d forward = new Vector3d(look.x, 0.0D, look.z);
+                  forward = forward.lengthSqr() < 1.0E-4D ? new Vector3d(0.0D, 0.0D, 1.0D) : forward.normalize();
+                  Vector3d impact = user.position().add(forward.scale(FORWARD));
+
+                  // the Stand steps forward (it is held there for a few ticks)
+                  standEntity.moveTo(impact.x, user.getY(), impact.z, user.yRot, 0.0F);
+                  TWUSlamHandler.holdStand(standEntity, impact.x, user.getY(), impact.z, user.yRot);
+
+                  BlockPos ground = findGround(world, new BlockPos(impact.x, user.getY() - 0.5D, impact.z));
+
+                  // knock back and damage everything around the impact point
+                  AxisAlignedBB area = new AxisAlignedBB(impact.x - RADIUS, user.getY() - 1.0D, impact.z - RADIUS,
+                          impact.x + RADIUS, user.getY() + 3.0D, impact.z + RADIUS);
+                  DamageSource source = user instanceof PlayerEntity ? DamageSource.playerAttack((PlayerEntity) user) : DamageSource.mobAttack(user);
+                  for (Entity e : world.getEntities(user, area, x -> x instanceof LivingEntity && !(x instanceof StandEntity) && x.isAlive())) {
+                      Vector3d away = new Vector3d(e.getX() - impact.x, 0.0D, e.getZ() - impact.z);
+                      away = away.lengthSqr() < 1.0E-4D ? forward : away.normalize();
+                      e.hurt(source, DAMAGE);
+                      e.setDeltaMovement(away.x * 1.3D, 0.5D, away.z * 1.3D);
+                      e.hurtMarked = true;
+                  }
+
+                  // the shift version also breaks the ground
+                  if (breakBlocks) {
+                      for (int dx = -2; dx <= 2; dx++) {
+                          for (int dz = -2; dz <= 2; dz++) {
+                              if (dx * dx + dz * dz > 6) continue;
+                              for (int dy = 0; dy >= -1; dy--) {
+                                  BlockPos pos = ground.offset(dx, dy, dz);
+                                  BlockState state = world.getBlockState(pos);
+                                  float hardness = state.getDestroySpeed(world, pos);
+                                  if (!state.isAir(world, pos) && hardness >= 0.0F && hardness <= MAX_BREAK_HARDNESS
+                                          && !state.hasTileEntity() && state.getFluidState().isEmpty()) {
+                                      world.destroyBlock(pos, true);
+                                  }
+                              }
+                          }
+                      }
+                  }
+
+                  // effects
+                  BlockState groundState = world.getBlockState(ground);
+                  if (world instanceof ServerWorld) {
+                      ServerWorld serverWorld = (ServerWorld) world;
+                      serverWorld.sendParticles(ParticleTypes.EXPLOSION, impact.x, ground.getY() + 1.0D, impact.z, 2, 0.5D, 0.1D, 0.5D, 0.0D);
+                      if (!groundState.isAir(world, ground)) {
+                          serverWorld.sendParticles(new BlockParticleData(ParticleTypes.BLOCK, groundState),
+                                  impact.x, ground.getY() + 1.1D, impact.z, 40, 1.2D, 0.2D, 1.2D, 0.15D);
+                      }
+                  }
+                  world.playSound(null, impact.x, ground.getY() + 1.0D, impact.z, SoundEvents.GENERIC_EXPLODE, SoundCategory.PLAYERS, 0.8F, 1.3F);
+              }
+
+              // the block under the impact point (searching a few blocks down if it is hovering over air)
+              private static BlockPos findGround(World world, BlockPos start) {
+                  BlockPos pos = start;
+                  for (int i = 0; i < 4 && world.getBlockState(pos).isAir(world, pos); i++) {
+                      pos = pos.below();
+                  }
+                  return pos;
+              }
+          }
+          EOF
+
+          cat > $P/action/TWUSlamHandler.java <<'EOF'
+          package com.rotpaddon.twu.action;
+
+          import java.util.ArrayList;
+          import java.util.Iterator;
+          import java.util.List;
+
+          import com.github.standobyte.jojo.entity.stand.StandEntity;
+          import com.rotpaddon.twu.AddonMain;
+          import net.minecraftforge.event.TickEvent;
+          import net.minecraftforge.eventbus.api.SubscribeEvent;
+          import net.minecraftforge.fml.common.Mod;
+
+          // Keeps the Stand where the slam happened for a few ticks (after all entities have ticked),
+          // so it does not immediately snap back to its user.
+          @Mod.EventBusSubscriber(modid = AddonMain.MOD_ID)
+          public class TWUSlamHandler {
+              private static final int HOLD_TICKS = 12;
+
+              private static class Hold {
+                  final StandEntity stand;
+                  final double x, y, z;
+                  final float yaw;
+                  int ticks = HOLD_TICKS;
+                  Hold(StandEntity stand, double x, double y, double z, float yaw) {
+                      this.stand = stand; this.x = x; this.y = y; this.z = z; this.yaw = yaw;
+                  }
+              }
+
+              private static final List<Hold> HOLDS = new ArrayList<>();
+
+              public static void holdStand(StandEntity stand, double x, double y, double z, float yaw) {
+                  HOLDS.removeIf(h -> h.stand == stand);
+                  HOLDS.add(new Hold(stand, x, y, z, yaw));
+              }
+
+              @SubscribeEvent
+              public static void onWorldTick(TickEvent.WorldTickEvent event) {
+                  if (event.phase != TickEvent.Phase.END || event.world.isClientSide) return;
+                  Iterator<Hold> it = HOLDS.iterator();
+                  while (it.hasNext()) {
+                      Hold h = it.next();
+                      if (h.stand.level != event.world) continue;
+                      if (!h.stand.isAlive() || --h.ticks <= 0) {
+                          it.remove();
+                          continue;
+                      }
+                      h.stand.moveTo(h.x, h.y, h.z, h.yaw, 0.0F);
+                  }
+              }
+          }
+          EOF
+
           cat > $P/init/InitStands.java <<'EOF'
           package com.rotpaddon.twu.init;
 
@@ -569,6 +730,7 @@ jobs:
           import com.github.standobyte.jojo.power.impl.stand.type.StandType;
           import com.rotpaddon.twu.AddonMain;
           import com.rotpaddon.twu.action.TWUGrabThrow;
+          import com.rotpaddon.twu.action.TWUGroundSlam;
           import com.rotpaddon.twu.action.TWULaunchPunch;
           import com.rotpaddon.twu.entity.TheWorldUltimateEntity;
 
@@ -589,32 +751,43 @@ jobs:
                       () -> new StandEntityLightAttack(new StandEntityLightAttack.Builder()
                               .punchSound(ModSounds.STAND_PUNCH_LIGHT)));
 
-              // Series of fast punches
+              // Series of fast punches (MUDA voice + punching sound)
               public static final RegistryObject<StandEntityAction> TWU_BARRAGE = ACTIONS.register("twu_barrage",
                       () -> new StandEntityMeleeBarrage(new StandEntityMeleeBarrage.Builder()
                               .barrageHitSound(ModSounds.STAND_PUNCH_LIGHT)
-                              .standSound(InitSounds.BARRAGE)));
+                              .standSound(InitSounds.MUDA, InitSounds.BARRAGE)));
 
               // Powerful punch that launches mobs upwards (shift + Punch / Barrage)
               public static final RegistryObject<StandEntityHeavyAttack> TWU_LAUNCH_PUNCH = ACTIONS.register("twu_launch_punch",
                       () -> new TWULaunchPunch(new StandEntityHeavyAttack.Builder()
                               .shiftVariationOf(TWU_PUNCH).shiftVariationOf(TWU_BARRAGE)
-                              .punchSound(ModSounds.STAND_PUNCH_HEAVY)
+                              .punchSound(InitSounds.HEAVY_PUNCH)
                               .partsRequired(StandPart.ARMS)));
 
-              // Grab the mob you are looking at (it is held in the Stand's hand)
-              public static final RegistryObject<StandEntityAction> TWU_GRAB = ACTIONS.register("twu_grab",
+              // One button: grab the mob you look at, press again to throw it
+              public static final RegistryObject<StandEntityAction> TWU_GRAB_THROW = ACTIONS.register("twu_grab_throw",
                       () -> new TWUGrabThrow(new StandEntityAction.Builder()
                               .standPose(StandPose.HEAVY_ATTACK)
                               .staminaCost(30.0F)
                               .standUserWalkSpeed(1.0F)
+                              .partsRequired(StandPart.ARMS)));
+
+              // The Stand steps 2 blocks forward and smashes the ground: knockback + a little damage
+              public static final RegistryObject<StandEntityAction> TWU_GROUND_SLAM = ACTIONS.register("twu_ground_slam",
+                      () -> new TWUGroundSlam(new StandEntityAction.Builder()
+                              .standPose(StandPose.HEAVY_ATTACK_FINISHER)
+                              .staminaCost(40.0F)
+                              .cooldown(60)
+                              .standUserWalkSpeed(1.0F)
                               .partsRequired(StandPart.ARMS), false));
 
-              // Throw the held mob
-              public static final RegistryObject<StandEntityAction> TWU_THROW = ACTIONS.register("twu_throw",
-                      () -> new TWUGrabThrow(new StandEntityAction.Builder()
+              // The same, but it also breaks blocks (shift)
+              public static final RegistryObject<StandEntityAction> TWU_GROUND_SLAM_BREAK = ACTIONS.register("twu_ground_slam_break",
+                      () -> new TWUGroundSlam(new StandEntityAction.Builder()
+                              .shiftVariationOf(TWU_GROUND_SLAM)
                               .standPose(StandPose.HEAVY_ATTACK_FINISHER)
-                              .staminaCost(20.0F)
+                              .staminaCost(50.0F)
+                              .cooldown(80)
                               .standUserWalkSpeed(1.0F)
                               .partsRequired(StandPart.ARMS), true));
 
@@ -655,8 +828,8 @@ jobs:
                               .rightClickHotbar(
                                       TWU_BLOCK.get(),
                                       TWU_TIME_STOP.get(),
-                                      TWU_GRAB.get(),
-                                      TWU_THROW.get()
+                                      TWU_GRAB_THROW.get(),
+                                      TWU_GROUND_SLAM.get()
                                       )
                               .defaultStats(TimeStopperStandStats.class, new TimeStopperStandStats.Builder()
                                       .tier(6)
@@ -670,7 +843,7 @@ jobs:
 
                               InitEntities.ENTITIES,
                               () -> new StandEntityType<TheWorldUltimateEntity>(TheWorldUltimateEntity::new, 0.7F, 2.15F)
-                              .summonSound(InitSounds.SUMMON_OR_DEFAULT)
+                              .summonSound(InitSounds.SUMMON)
                               .unsummonSound(ModSounds.STAND_UNSUMMON_DEFAULT))
                       .withDefaultStandAttributes();
           }
@@ -726,91 +899,13 @@ jobs:
           package com.rotpaddon.twu.client.render;
 
           import com.github.standobyte.jojo.client.render.entity.model.stand.HumanoidStandModel;
-          import com.github.standobyte.jojo.client.render.entity.pose.IModelPose;
-          import com.github.standobyte.jojo.client.render.entity.pose.ModelPose;
-          import com.github.standobyte.jojo.client.render.entity.pose.RotationAngle;
           import com.rotpaddon.twu.entity.TheWorldUltimateEntity;
 
-          // Humanoid model with the summon / idle poses taken from The World Alternative Universe addon.
+          // Placeholder: the real model class (poses and animations) is put in by the final assembly.
           public class TWUModel extends HumanoidStandModel<TheWorldUltimateEntity> {
 
               public TWUModel() {
                   super();
-              }
-
-              @Override
-              protected RotationAngle[][] initSummonPoseRotations() {
-                  return new RotationAngle[][] {
-                      new RotationAngle[] {
-                          RotationAngle.fromDegrees(head, -23.94412F, -5.79396F, 11.45258F),
-                          RotationAngle.fromDegrees(body, -7.5F, -50.0F, 0.0F),
-                          RotationAngle.fromDegrees(upperPart, 0.0F, 0.0F, 0.0F),
-                          RotationAngle.fromDegrees(leftArm, 5.24264F, 17.64914F, -0.916F),
-                          RotationAngle.fromDegrees(leftForeArm, -67.5F, 0.0F, 0.0F),
-                          RotationAngle.fromDegrees(rightArm, -23.94412F, -5.79396F, 11.45258F),
-                          RotationAngle.fromDegrees(rightForeArm, -12.5F, 0.0F, 2.5F),
-                          RotationAngle.fromDegrees(leftLeg, -45.0F, 0.0F, -5.0F),
-                          RotationAngle.fromDegrees(leftLowerLeg, 52.5F, 0.0F, 0.0F),
-                          RotationAngle.fromDegrees(rightLeg, 20.0F, 5.0F, 0.0F),
-                          RotationAngle.fromDegrees(rightLowerLeg, 22.5F, 0.0F, 0.0F)
-                      },
-                      new RotationAngle[] {
-                          RotationAngle.fromDegrees(head, 12.5F, 0.0F, 0.0F),
-                          RotationAngle.fromDegrees(body, 0.0F, 32.5F, 0.0F),
-                          RotationAngle.fromDegrees(upperPart, 0.0F, 0.0F, 0.0F),
-                          RotationAngle.fromDegrees(leftArm, 31.06171F, 14.67052F, -38.7015F),
-                          RotationAngle.fromDegrees(leftForeArm, -54.5052F, 12.83214F, 11.02332F),
-                          RotationAngle.fromDegrees(rightArm, -22.5947F, -25.61033F, 74.7314F),
-                          RotationAngle.fromDegrees(rightForeArm, -49.18983F, -2.16323F, -15.18379F),
-                          RotationAngle.fromDegrees(leftLeg, 0.0F, 0.0F, -10.0F),
-                          RotationAngle.fromDegrees(leftLowerLeg, 52.5F, 0.0F, 0.0F),
-                          RotationAngle.fromDegrees(rightLeg, -25.0F, 0.0F, 10.0F),
-                          RotationAngle.fromDegrees(rightLowerLeg, 60.0F, 0.0F, 0.0F)
-                          },
-                      new RotationAngle[] {
-                          RotationAngle.fromDegrees(head, 12.5F, 0.0F, 0.0F),
-                          RotationAngle.fromDegrees(body, -10.0F, 32.5F, 0.0F),
-                          RotationAngle.fromDegrees(upperPart, 0.0F, 0.0F, 0.0F),
-                          RotationAngle.fromDegrees(leftArm, -171.9292F, -55.8606F, 17.249F),
-                          RotationAngle.fromDegrees(leftForeArm, -97.71917F, 3.8993F, 23.21666F),
-                          RotationAngle.fromDegrees(rightArm, -153.63437F, 54.47308F, -19.57356F),
-                          RotationAngle.fromDegrees(rightForeArm, -106.68983F, -2.16323F, -15.18379F),
-                          RotationAngle.fromDegrees(leftLeg, 0.0F, 0.0F, -10.0F),
-                          RotationAngle.fromDegrees(leftLowerLeg, 52.5F, 0.0F, 0.0F),
-                          RotationAngle.fromDegrees(rightLeg, -25.0F, 0.0F, 10.0F),
-                          RotationAngle.fromDegrees(rightLowerLeg, 60.0F, 0.0F, 0.0F)
-                      }
-                  };
-              }
-
-              @Override
-              protected ModelPose<TheWorldUltimateEntity> initIdlePose() {
-                  return new ModelPose<>(new RotationAngle[] {
-                      RotationAngle.fromDegrees(upperPart, 0.0F, 0.0F, 0.0F),
-                      RotationAngle.fromDegrees(body, -8.7F, 50.0F, -2.0F),
-                      RotationAngle.fromDegrees(leftArm, 0.0F, 5.0F, -20.0F),
-                      RotationAngle.fromDegrees(leftForeArm, -25.0F, 0.0F, 0.0F),
-                      RotationAngle.fromDegrees(rightArm, 20.2F, 1.0F, 10.0F),
-                      RotationAngle.fromDegrees(rightForeArm, -30.0F, 0.0F, 0.0F),
-                      RotationAngle.fromDegrees(leftLeg, 2.5F, -17.5F, -5.2F),
-                      RotationAngle.fromDegrees(leftLowerLeg, 22.5F, 0.0F, 0.0F),
-                      RotationAngle.fromDegrees(rightLeg, -26.0F, 31.0F, 7.5F),
-                      RotationAngle.fromDegrees(rightLowerLeg, 92.5F, 0.0F, 0.0F)
-                  });
-              }
-
-              @Override
-              protected IModelPose<TheWorldUltimateEntity> initIdlePose2Loop() {
-                  return new ModelPose<>(new RotationAngle[] {
-                      RotationAngle.fromDegrees(leftArm, 5.0F, 5.0F, -20.0F),
-                      RotationAngle.fromDegrees(leftForeArm, -32.5F, 0.0F, 0.0F),
-                      RotationAngle.fromDegrees(rightArm, 25.0F, 1.0F, 10.0F),
-                      RotationAngle.fromDegrees(rightForeArm, -32.5F, 0.0F, 0.0F),
-                      RotationAngle.fromDegrees(leftLeg, 8.0F, -17.5F, -5.2F),
-                      RotationAngle.fromDegrees(leftLowerLeg, 25.0F, 0.0F, 0.0F),
-                      RotationAngle.fromDegrees(rightLeg, -28.5F, 31.0F, 8.5F),
-                      RotationAngle.fromDegrees(rightLowerLeg, 100.0F, 0.0F, 0.0F)
-                  });
               }
           }
           EOF
